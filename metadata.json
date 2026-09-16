@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Remix Tiv Huor Fertilizer Menu",
+  "description": "Product catalog and view menu for agricultural fertilizers from Tiv Huor Co., Ltd. with product specs, Khmer descriptions, NPK details, and admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

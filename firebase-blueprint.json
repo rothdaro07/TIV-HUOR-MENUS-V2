@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "products": {
+      "title": "Products",
+      "description": "Fertilizer products in Tiv Huor catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "name": { "type": "string", "description": "English / code name" },
+        "nameKh": { "type": "string", "description": "Khmer product name" },
+        "nicknameKh": { "type": "string", "description": "Khmer nickname" },
+        "category": { "type": "string", "description": "Category ID" },
+        "categoryKh": { "type": "string", "description": "Category Khmer name" },
+        "npk": { "type": "string", "description": "NPK formula" },
+        "usage": { "type": "string", "description": "Usage headline" },
+        "detailedUsage": { "type": "string", "description": "Detailed instructions" },
+        "suitableCrops": { "type": "array", "items": { "type": "string" } },
+        "benefits": { "type": "array", "items": { "type": "string" } },
+        "weight": { "type": "string", "description": "Weight e.g. 50kg" },
+        "price": { "type": "number", "description": "Price in USD" },
+        "imageUrl": { "type": "string", "description": "Cloudinary or image URL" },
+        "isPopular": { "type": "boolean" },
+        "isNew": { "type": "boolean" },
+        "order": { "type": "number" },
+        "granulesColor": { "type": "string" },
+        "density": { "type": "string" },
+        "form": { "type": "string" },
+        "nutrients": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "nameKh", "price", "category"]
+    },
+    "categories": {
+      "title": "Categories",
+      "description": "Product categories",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Category ID" },
+        "name": { "type": "string", "description": "Category English name" },
+        "nameKh": { "type": "string", "description": "Category Khmer name" },
+        "description": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "nameKh"]
+    },
+    "settings": {
+      "title": "CompanySettings",
+      "description": "Company profile branding and logo settings",
+      "type": "object",
+      "properties": {
+        "nameKh": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "brandName": { "type": "string" },
+        "brandSlogan": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "logoText": { "type": "string" },
+        "phones": { "type": "array", "items": { "type": "string" } },
+        "telegram": { "type": "string" },
+        "address": { "type": "string" },
+        "workingHours": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestoreRules": "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /{document=**} {\n      allow read, write: if true;\n    }\n  }\n}"
+}
