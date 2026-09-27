@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Layers, ShoppingBag, Plus, Minus, CreditCard, Check, Truck, Globe, PackageCheck, Boxes, Sparkles } from 'lucide-react';
+import { ArrowLeft, Layers, ShoppingBag, Plus, Minus, CreditCard, Check, Truck, Sparkles } from 'lucide-react';
 import { Product, Currency, PriceMode, ProductPackagingOption } from '../types';
 import { ProductBagIllustration } from '../components/ProductBagIllustration';
 import { ProductDetailSkeleton } from '../components/CatalogSkeleton';
@@ -47,10 +47,6 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   const currentPackagingLabel = activeSizeOpt?.labelKh || product.packagingSize || 'បាវ';
   const currentWeightLabel = activeSizeOpt?.weight || product.weight;
 
-  const isOverseasStock = product.stockStatus === 'overseas_stock';
-  const stockQuantity = product.stockQty ?? 100;
-  const stockUnitName = product.stockUnit || (product.groupId === 'machinery' ? 'គ្រឿង' : 'បាវ');
-
   const handleAdd = () => {
     if (onAddToCart) {
       const customizedProduct: Product = {
@@ -94,19 +90,6 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         </button>
 
         <div className="flex items-center gap-2 text-xs font-['Battambang']">
-          {/* Stock Status Badge */}
-          {isOverseasStock ? (
-            <span className="inline-flex items-center gap-1.5 bg-blue-100 text-blue-900 border border-blue-300 font-bold px-3 py-1 rounded-full shadow-2xs">
-              <Globe className="w-3.5 h-3.5 text-blue-600" />
-              <span>មានស្ដុកនៅក្រៅប្រទេស</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold px-3 py-1 rounded-full shadow-2xs">
-              <PackageCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>មានស្ដុកក្នុងស្រុក ({stockQuantity} {stockUnitName})</span>
-            </span>
-          )}
-
           {priceMode === 'wholesale' && (
             <span className="bg-amber-400 text-slate-900 font-bold px-3 py-1 rounded-full border border-amber-300 shadow-2xs">
               តម្លៃបោះដុំ (Wholesale)
@@ -123,20 +106,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         {/* Left Column: Product Image & Purchase Action Box */}
         <div className="lg:col-span-5 space-y-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6 flex flex-col items-center justify-center shadow-xs overflow-hidden relative">
-            {/* Stock Ribbon Badge */}
-            <div className="absolute top-3 left-3 z-10">
-              {isOverseasStock ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg shadow-sm">
-                  <Globe className="w-3 h-3" /> មានស្ដុកនៅក្រៅប្រទេស
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-emerald-600 text-white px-2.5 py-1 rounded-lg shadow-sm">
-                  <Check className="w-3 h-3" /> មានក្នុងស្តុក ({stockQuantity} {stockUnitName})
-                </span>
-              )}
-            </div>
-
-            <div className="w-full aspect-square max-w-sm rounded-xl overflow-hidden flex items-center justify-center bg-slate-50 border border-slate-100 shadow-2xs mt-4">
+            <div className="w-full aspect-square max-w-sm rounded-xl overflow-hidden flex items-center justify-center bg-slate-50 border border-slate-100 shadow-2xs">
               <ProductBagIllustration product={product} size="hero" className="w-full h-full" />
             </div>
           </div>
@@ -232,35 +202,6 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
               <span className={`font-mono font-bold text-sm ${priceMode === 'wholesale' ? 'text-amber-700' : 'text-[#1E5FA8]'}`}>
                 ${totalUSD.toFixed(2)} ({totalKHR.toLocaleString()} ៛)
               </span>
-            </div>
-
-            {/* Stock Information Notice */}
-            <div className={`p-3 rounded-xl border text-xs font-['Kantumruy_Pro'] flex items-start gap-2.5 ${
-              isOverseasStock
-                ? 'bg-blue-50/80 border-blue-200 text-blue-900'
-                : 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
-            }`}>
-              {isOverseasStock ? (
-                <>
-                  <Globe className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold block">ទំនិញមានស្ដុកនៅក្រៅប្រទេស (Overseas Partner Stock)</span>
-                    <span className="text-[11px] text-blue-700">
-                      ស្តុកបច្ចុប្បន្ន៖ <strong>{stockQuantity} {stockUnitName}</strong> | រយៈពេលដឹកជញ្ជូនរហ័ស 3-7 ថ្ងៃមកដល់កម្ពុជា
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <Boxes className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold block">ទំនិញមានក្នុងស្តុកឃ្លាំង (Local Warehouse Ready)</span>
-                    <span className="text-[11px] text-emerald-700">
-                      ស្តុកបច្ចុប្បន្ន៖ <strong>{stockQuantity} {stockUnitName}</strong> | អាចដឹកជញ្ជូនជូនភ្លាមៗទូទាំងប្រទេស
-                    </span>
-                  </div>
-                </>
-              )}
             </div>
 
             {/* Action Buttons */}

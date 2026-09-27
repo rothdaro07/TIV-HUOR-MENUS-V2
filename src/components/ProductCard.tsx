@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, Plus, ShoppingBag, Globe, PackageCheck, Layers } from 'lucide-react';
+import { Eye, Plus, Layers } from 'lucide-react';
 import { Product, Currency, PriceMode } from '../types';
 import { ProductBagIllustration } from './ProductBagIllustration';
 import { getProductDisplayPrice } from '../utils/pricing';
@@ -21,10 +21,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const { priceUSD, priceKHR } = getProductDisplayPrice(product, priceMode, currency);
 
-  const isOverseas = product.stockStatus === 'overseas_stock';
   const sizeCount = product.availableSizes?.length || 0;
-  const stockQty = product.stockQty ?? 100;
-  const stockUnit = product.stockUnit || (product.groupId === 'machinery' ? 'គ្រឿង' : 'បាវ');
 
   return (
     <div className="group relative bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col hover:border-blue-400 hover:shadow-md transition-all">
@@ -35,27 +32,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       >
         <ProductBagIllustration product={product} size="md" className="w-full h-full" />
         
-        {/* Stock Status Badge (Top-Left) */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
-          {isOverseas ? (
-            <span className="inline-flex items-center gap-1 bg-blue-600/90 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded-md font-['Battambang'] shadow-xs">
-              <Globe className="w-2.5 h-2.5" />
-              <span>ស្ដុកក្រៅប្រទេស</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 bg-emerald-600/90 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded-md font-['Battambang'] shadow-xs">
-              <PackageCheck className="w-2.5 h-2.5" />
-              <span>មានស្ដុក ({stockQty} {stockUnit})</span>
-            </span>
-          )}
-
-          {sizeCount > 1 && (
+        {/* Size Options Badge (Top-Left) */}
+        {sizeCount > 1 && (
+          <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
             <span className="inline-flex items-center gap-1 bg-white/90 backdrop-blur-xs text-slate-800 border border-slate-200 text-[9px] font-bold px-1.5 py-0.5 rounded-md font-['Kantumruy_Pro'] shadow-xs">
               <Layers className="w-2.5 h-2.5 text-blue-600" />
               <span>{sizeCount} ខ្នាតទំហំ</span>
             </span>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Wholesale Badge (Top-Right) */}
         {priceMode === 'wholesale' && (

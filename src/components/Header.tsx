@@ -4,9 +4,12 @@ import {
   Search,
   ShoppingBag,
   Check,
+  Download,
 } from 'lucide-react';
 import { Currency, CompanyProfile, ProductGroupId, PriceMode, Category } from '../types';
 import { COMPANY_INFO, PRODUCT_GROUPS, INITIAL_CATEGORIES } from '../data/initialProducts';
+import { usePWAInstall } from '../hooks/usePWAInstall';
+import { triggerInstallGuideModal } from './InstallPwaPrompt';
 
 interface HeaderProps {
   activeTab: 'catalog' | 'detail' | 'calculator' | 'admin' | 'contact';
@@ -48,6 +51,15 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectCategory,
 }) => {
   const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
+  const { isInstallable, isInstalled, install } = usePWAInstall();
+
+  const handleHeaderInstallClick = async () => {
+    if (isInstallable) {
+      await install();
+    } else {
+      triggerInstallGuideModal();
+    }
+  };
 
   const handleGroupClick = (groupId: ProductGroupId) => {
     if (onSelectGroup) {
@@ -207,6 +219,18 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>ដុំ</span>
               </button>
             </div>
+          )}
+
+          {/* In-App PWA Install / Add Shortcut Button (hidden when already running as standalone App) */}
+          {!isInstalled && (
+            <button
+              onClick={handleHeaderInstallClick}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white border border-emerald-400/50 transition-all shadow-xs cursor-pointer"
+              title="ដំឡើងកម្មវិធីលើទូរសព្ទ ឬកុំព្យូទ័រ (Install App / Shortcut)"
+            >
+              <Download className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden md:inline font-['Battambang']">ដំឡើង App</span>
+            </button>
           )}
 
           {/* Admin Dashboard / Login Button */}

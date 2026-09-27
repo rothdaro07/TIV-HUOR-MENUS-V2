@@ -469,12 +469,14 @@ export default function App() {
       }
 
       // Update dynamic favicon and Apple touch icon for Add to Home Screen
-      if (companyProfile.logoUrl) {
-        const favicon = document.getElementById('dynamic-favicon') as HTMLLinkElement | null;
+      const favicon = document.getElementById('dynamic-favicon') as HTMLLinkElement | null;
+      const appleIcon = document.getElementById('dynamic-apple-icon') as HTMLLinkElement | null;
+      if (companyProfile.logoUrl && !companyProfile.logoUrl.startsWith('data:image/svg')) {
         if (favicon) favicon.href = companyProfile.logoUrl;
-
-        const appleIcon = document.getElementById('dynamic-apple-icon') as HTMLLinkElement | null;
         if (appleIcon) appleIcon.href = companyProfile.logoUrl;
+      } else {
+        if (favicon) favicon.href = '/icon.svg';
+        if (appleIcon) appleIcon.href = '/apple-touch-icon.png';
       }
     } catch (e) {
       console.error('Failed to persist company profile to localStorage', e);
