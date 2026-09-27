@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Filter, LayoutGrid, List, ArrowRight, Eye, Plus, ShoppingBag, X, ChevronDown } from 'lucide-react';
+import { Filter, LayoutGrid, List, Eye, Plus, ChevronDown } from 'lucide-react';
 import { Product, Currency, ViewMode, Category, ProductGroupId, PriceMode } from '../types';
 import { ProductCard } from '../components/ProductCard';
 import { ProductBagIllustration } from '../components/ProductBagIllustration';
+import { CategoryBarSkeleton, ProductGridSkeleton, ProductListSkeleton } from '../components/CatalogSkeleton';
 import { INITIAL_CATEGORIES, PRODUCT_GROUPS } from '../data/initialProducts';
 import { getProductDisplayPrice } from '../utils/pricing';
 
@@ -11,6 +12,7 @@ interface HomeProps {
   categories?: Category[];
   currency: Currency;
   priceMode?: PriceMode;
+  isLoading?: boolean;
   onSelectProduct: (product: Product) => void;
   onAddToCart?: (product: Product) => void;
   searchQuery: string;
@@ -26,6 +28,7 @@ export const Home: React.FC<HomeProps> = ({
   categories = INITIAL_CATEGORIES,
   currency,
   priceMode = 'retail',
+  isLoading = false,
   onSelectProduct,
   onAddToCart,
   searchQuery,
@@ -123,55 +126,66 @@ export const Home: React.FC<HomeProps> = ({
   }, [products, selectedGroup, selectedCategory, searchQuery, sortBy, categories]);
 
   const activeGroupName = PRODUCT_GROUPS.find((g) => g.id === selectedGroup)?.nameKh;
+  const showSkeleton = Boolean(isLoading) || products.length === 0;
 
   return (
     <div className="space-y-6 pb-12">
       {/* Category Bar & Controls */}
       <section className="space-y-3 sm:space-y-4">
         {/* Category Bar with scroll */}
-        <div className="bg-white border border-slate-200 rounded-xl px-3 sm:px-5 py-2.5 sm:py-3 flex gap-2 sm:gap-3 shrink-0 items-center overflow-x-auto no-scrollbar shadow-xs">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1 font-['Battambang'] flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            ប្រភេទ:
-          </span>
-          {categoryList.map((cat) => {
-            const isActive = selectedCategory === cat.id;
-            return (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`shrink-0 px-3 sm:px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 border ${
-                  isActive
-                    ? 'bg-[#1E5FA8] text-white border-[#1E5FA8] shadow-xs'
-                    : 'bg-slate-100/90 hover:bg-blue-50/80 text-slate-700 border-slate-200/70 hover:border-blue-200 shadow-2xs'
-                }`}
-              >
-                <span>{cat.label}</span>
-                <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                    isActive ? 'bg-blue-900/60 text-blue-100' : 'bg-white/80 text-slate-600 shadow-2xs'
+        {isLoading ? (
+          <CategoryBarSkeleton />
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-xl px-3 sm:px-5 py-2.5 sm:py-3 flex gap-2 sm:gap-3 shrink-0 items-center overflow-x-auto no-scrollbar shadow-xs">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 mr-1 font-['Battambang'] flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5 text-slate-400" />
+              ប្រភេទ:
+            </span>
+            {categoryList.map((cat) => {
+              const isActive = selectedCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`shrink-0 px-3 sm:px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 border ${
+                    isActive
+                      ? 'bg-[#1E5FA8] text-white border-[#1E5FA8] shadow-xs'
+                      : 'bg-slate-100/90 hover:bg-blue-50/80 text-slate-700 border-slate-200/70 hover:border-blue-200 shadow-2xs'
                   }`}
                 >
-                  {cat.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <span>{cat.label}</span>
+                  <span
+                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                      isActive ? 'bg-blue-900/60 text-blue-100' : 'bg-white/80 text-slate-600 shadow-2xs'
+                    }`}
+                  >
+                    {cat.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Second Row: Status, Sort, and View Mode Toggle (Responsive Single Line) */}
         <div className="flex items-center justify-between gap-2 sm:gap-4 bg-white px-3.5 sm:px-5 py-3 rounded-2xl border border-slate-200/90 shadow-xs font-['Battambang']">
           {/* Product Count Display */}
-          <div className="text-xs sm:text-sm font-bold text-slate-800 shrink-0 whitespace-nowrap flex items-center gap-1">
-            <span>បង្ហាញទំនិញសរុប:</span>
-            <span className="font-bold text-[#1E5FA8] px-0.5">{filteredProducts.length}</span>
-            <span>មុខ</span>
-            {searchQuery && (
-              <span className="text-slate-400 text-xs hidden md:inline ml-1">
-                (ស្វែងរក: "{searchQuery}")
-              </span>
-            )}
-          </div>
+          {showSkeleton ? (
+            <div className="flex items-center gap-2">
+              <div className="h-4 w-36 sm:w-48 bg-slate-200 rounded-md animate-pulse" />
+            </div>
+          ) : (
+            <div className="text-xs sm:text-sm font-bold text-slate-800 shrink-0 whitespace-nowrap flex items-center gap-1">
+              <span>បង្ហាញទំនិញសរុប:</span>
+              <span className="font-bold text-[#1E5FA8] px-0.5">{filteredProducts.length}</span>
+              <span>មុខ</span>
+              {searchQuery && (
+                <span className="text-slate-400 text-xs hidden md:inline ml-1">
+                  (ស្វែងរក: "{searchQuery}")
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Right Controls: Sort Dropdown & View Mode Switcher */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
@@ -220,7 +234,13 @@ export const Home: React.FC<HomeProps> = ({
       </section>
 
       {/* Product Catalog Display Section */}
-      {filteredProducts.length === 0 ? (
+      {showSkeleton ? (
+        viewMode === 'grid' ? (
+          <ProductGridSkeleton count={8} />
+        ) : (
+          <ProductListSkeleton rows={6} />
+        )
+      ) : filteredProducts.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-3xl border border-slate-200 p-6">
           <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-3">
             <Filter className="w-8 h-8" />

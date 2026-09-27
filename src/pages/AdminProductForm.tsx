@@ -1662,50 +1662,6 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
               <span className="text-[10px] text-blue-600 font-bold">Live Preview</span>
             </h3>
 
-            {/* Bag / Machine Theme Selector */}
-            {activeGroup === 'chemical_fertilizer' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ពណ៌បាវជី (Bag Theme):
-                </label>
-                <select
-                  value={formData.bagColorTheme}
-                  onChange={(e) => setFormData({ ...formData, bagColorTheme: e.target.value as any })}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold"
-                >
-                  <option value="rainbow">Rainbow Header (NPK Classic)</option>
-                  <option value="green">Green (Rice & Nature)</option>
-                  <option value="yellow">Yellow (ECO Super Humic)</option>
-                  <option value="black">Black (Organic Humic)</option>
-                  <option value="red">Red (Urea & Kali)</option>
-                  <option value="purple">Purple (DAP & Special)</option>
-                  <option value="blue">Blue (Tiv Huor Standard)</option>
-                </select>
-              </div>
-            )}
-
-            {/* Granule Color Selector for Fertilizers */}
-            {(activeGroup === 'chemical_fertilizer' || activeGroup === 'organic_fertilizer') && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ពណ៌គ្រាប់ជី (Granule Style):
-                </label>
-                <select
-                  value={formData.granuleColor}
-                  onChange={(e) => setFormData({ ...formData, granuleColor: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold"
-                >
-                  <option value="mixed-pink-white">គ្រាប់ចម្រុះផ្កាឈូក-ស-បៃតង</option>
-                  <option value="white-pearl">គ្រាប់សគុជ (White Pearl)</option>
-                  <option value="green-granule">គ្រាប់បៃតង (Green Granules)</option>
-                  <option value="red-potash">គ្រាប់ក្រហម (Potash MOP)</option>
-                  <option value="black-dap">គ្រាប់ប្រផេះចាស់/ខ្មៅ (DAP)</option>
-                  <option value="grey-pellet">គ្រាប់ប្រផេះ (Ammonium Sulfate)</option>
-                  <option value="organic-brown">គ្រាប់ត្នោតសរីរាង្គ (Organic)</option>
-                </select>
-              </div>
-            )}
-
             {/* Image Uploader & Presets */}
             <ImageUploader
               currentImageUrl={formData.imageUrl || ''}
@@ -1721,7 +1677,7 @@ export const AdminProductForm: React.FC<AdminProductFormProps> = ({
                 <ProductBagIllustration
                   product={formData as Product}
                   size="md"
-                  showGranulesBadge={true}
+                  showGranulesBadge={false}
                   className="w-40 h-40 rounded-xl"
                 />
               </div>

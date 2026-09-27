@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, Layers, ShoppingBag, Plus, Minus, CreditCard, Check, Truck, Globe, PackageCheck, Boxes, Sparkles } from 'lucide-react';
 import { Product, Currency, PriceMode, ProductPackagingOption } from '../types';
 import { ProductBagIllustration } from '../components/ProductBagIllustration';
+import { ProductDetailSkeleton } from '../components/CatalogSkeleton';
 import { ProductSpecTable } from '../components/ProductSpecTable';
 import { getProductDisplayPrice } from '../utils/pricing';
 
@@ -10,6 +11,7 @@ interface ProductDetailProps {
   allProducts?: Product[];
   currency: Currency;
   priceMode?: PriceMode;
+  isLoading?: boolean;
   onBack: () => void;
   onSelectProduct?: (p: Product) => void;
   onAddToCart?: (product: Product, quantity: number, selectedSize?: ProductPackagingOption) => void;
@@ -20,12 +22,17 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   product,
   currency,
   priceMode = 'retail',
+  isLoading = false,
   onBack,
   onAddToCart,
   onBuyNow,
 }) => {
   const [quantity, setQuantity] = useState(1);
   const [addedAnimation, setAddedAnimation] = useState(false);
+
+  if (isLoading || !product) {
+    return <ProductDetailSkeleton onBack={onBack} />;
+  }
 
   // Initialize selected size with the default option if available
   const defaultSizeOpt = product.availableSizes?.find((s) => s.isDefault) || product.availableSizes?.[0];

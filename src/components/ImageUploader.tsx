@@ -1,10 +1,52 @@
 import React, { useState } from 'react';
-import { Loader2, Cloud, AlertCircle, Trash2 } from 'lucide-react';
+import { Loader2, Cloud, AlertCircle, Trash2, ImageOff } from 'lucide-react';
 import { uploadToCloudinary } from '../lib/cloudinary';
+import { isValidProductImageUrl } from './ProductBagIllustration';
 
 interface ImageUploaderProps {
   currentImageUrl: string;
   onImageSelected: (url: string) => void;
+}
+
+function compressImageToDataUrl(file: File, maxDim = 800, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const img = new window.Image();
+      img.onload = () => {
+        try {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
 }
 
 export const ImageUploader: React.FC<ImageUploaderProps> = ({
@@ -16,6 +58,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const hasValidImageUrl = isValidProductImageUrl(currentImageUrl);
 
   const handleProcessFile = async (file: File) => {
     if (!file) return;
@@ -32,17 +76,16 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       onImageSelected(cloudinaryUrl);
       setPreviewError(false);
     } catch (err: any) {
-      console.warn('Cloudinary upload error, falling back to base64 preview:', err);
+      console.warn('Cloudinary upload error, falling back to compressed base64 preview:', err);
       setUploadError(err?.message || 'មិនអាច Upload ទៅកាន់ Cloudinary បានទេ កំពុងប្រើរូបភាពមូលដ្ឋាន');
-      
-      // Fallback to base64 so user doesn't lose image
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        onImageSelected(base64);
+
+      try {
+        const compressedBase64 = await compressImageToDataUrl(file);
+        onImageSelected(compressedBase64);
         setPreviewError(false);
-      };
-      reader.readAsDataURL(file);
+      } catch (fallbackErr) {
+        console.error('Fallback image compression error:', fallbackErr);
+      }
     } finally {
       setIsUploading(false);
     }
@@ -139,26 +182,20 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
       </div>
 
       {/* Current Preview */}
-      {currentImageUrl && (
+      {hasValidImageUrl ? (
         <div className="p-3 bg-slate-100 rounded-xl flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-14 h-14 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
-              {currentImageUrl.startsWith('http') || currentImageUrl.startsWith('data:') ? (
-                !previewError ? (
-                  <img
-                    src={currentImageUrl}
-                    alt="Preview"
-                    referrerPolicy="no-referrer"
-                    className="max-h-full max-w-full object-contain"
-                    onError={() => setPreviewError(true)}
-                  />
-                ) : (
-                  <span className="text-[9px] text-red-500">ខូចរូបភាព</span>
-                )
+              {!previewError ? (
+                <img
+                  src={currentImageUrl}
+                  alt="Preview"
+                  referrerPolicy="no-referrer"
+                  className="max-h-full max-w-full object-contain"
+                  onError={() => setPreviewError(true)}
+                />
               ) : (
-                <span className="text-[10px] font-bold text-blue-700 text-center px-1">
-                  រូបភាពបាវជី
-                </span>
+                <ImageOff className="w-5 h-5 text-slate-400" />
               )}
             </div>
             <div className="text-xs min-w-0">
@@ -183,6 +220,15 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           >
             <Trash2 className="w-4 h-4" />
           </button>
+        </div>
+      ) : (
+        <div className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center gap-3 text-slate-400">
+          <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
+            <ImageOff className="w-4 h-4 text-slate-400" />
+          </div>
+          <span className="text-xs font-medium font-['Kantumruy_Pro']">
+            មិនទាន់មានរូបភាពទំនិញទេ (នឹងបង្ហាញរូបតំណាង No Image)
+          </span>
         </div>
       )}
     </div>

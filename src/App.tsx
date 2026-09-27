@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, Currency, Category, CompanyProfile, AdminAuthSettings, SystemBackupData, CartItem, Order, BankPaymentAccount, ProductGroupId, PriceMode } from './types';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES, COMPANY_INFO, INITIAL_BANK_ACCOUNTS } from './data/initialProducts';
 import { Header } from './components/Header';
 import { InstallPwaPrompt } from './components/InstallPwaPrompt';
-import { LoadingScreen } from './components/LoadingScreen';
 import { CartCheckoutDrawer } from './components/CartCheckoutDrawer';
 import { OrderReceiptModal } from './components/OrderReceiptModal';
+import { isValidProductImageUrl } from './components/ProductBagIllustration';
 import { Home } from './pages/Home';
 import { ProductDetail } from './pages/ProductDetail';
 import { AdminLogin } from './pages/AdminLogin';
@@ -44,18 +44,25 @@ const STORAGE_KEY_CART = 'tivhuor_cart_items_v1';
 const STORAGE_KEY_ORDERS = 'tivhuor_orders_history_v1';
 const STORAGE_KEY_BANK_ACCOUNTS = 'tivhuor_bank_accounts_v1';
 
-// Helper to clean legacy branding from product nameKh if present
+// Helper to clean legacy branding and non-URL synthetic bag placeholders from product
 function sanitizeProductName(p: Product): Product {
-  if (p.nameKh && p.nameKh.includes('ជីកសិកម្ម សញ្ញាមហាកំពែង')) {
-    return {
-      ...p,
-      nameKh: p.nameKh.replace(/ជីកសិកម្ម សញ្ញាមហាកំពែង\s*/g, '').trim() || p.name,
-    };
-  }
-  return p;
+  const rawUrl = p.imageUrl ? p.imageUrl.trim() : '';
+  const hasValidUrl = isValidProductImageUrl(rawUrl);
+  const cleanedNameKh =
+    p.nameKh && p.nameKh.includes('ជីកសិកម្ម សញ្ញាមហាកំពែង')
+      ? p.nameKh.replace(/ជីកសិកម្ម សញ្ញាមហាកំពែង\s*/g, '').trim() || p.name
+      : p.nameKh;
+
+  return {
+    ...p,
+    nameKh: cleanedNameKh,
+    imageUrl: hasValidUrl ? rawUrl : '',
+  };
 }
 
 export default function App() {
+  const clearedImageIdsRef = useRef<Set<string>>(new Set());
+
   // Load company profile from localStorage or fallback to default COMPANY_INFO
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(() => {
     try {
@@ -73,17 +80,25 @@ export default function App() {
   // Load products from localStorage or initialize with standard SKUs
   const [products, setProducts] = useState<Product[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_PRODUCTS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map(sanitizeProductName);
+      const keysToCheck = [
+        STORAGE_KEY_PRODUCTS,
+        'tivhuor_fertilizer_products_v2',
+        'tivhuor_fertilizer_products_v1',
+        'tivhuor_fertilizer_products',
+      ];
+      for (const key of keysToCheck) {
+        const saved = localStorage.getItem(key);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map(sanitizeProductName);
+          }
         }
       }
     } catch (e) {
       console.error('Error loading stored products', e);
     }
-    return INITIAL_PRODUCTS;
+    return INITIAL_PRODUCTS.map(sanitizeProductName);
   });
 
   // Load categories from localStorage or initialize with INITIAL_CATEGORIES
@@ -121,16 +136,8 @@ export default function App() {
   // Search filter
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Initial App Opening Loading Screen State
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-
-  useEffect(() => {
-    // Smooth initial loading splash screen timer
-    const timer = setTimeout(() => {
-      setIsInitialLoading(false);
-    }, 950);
-    return () => clearTimeout(timer);
-  }, []);
+  // Database Loading State (only true when products list is empty and waiting for initial DB fetch)
+  const [isDatabaseLoading, setIsDatabaseLoading] = useState<boolean>(() => products.length === 0);
 
   // Firebase Realtime Sync state
   const [isFirebaseSynced, setIsFirebaseSynced] = useState(false);
@@ -328,10 +335,7 @@ export default function App() {
 
     const setupFirebase = async () => {
       try {
-        // Seed if first time
-        await initializeFirestoreDataIfEmpty();
-
-        // Subscribe to real-time company profile
+        // Subscribe to real-time company profile immediately
         unsubscribeCompany = subscribeToCompanyProfile(
           (liveProfile) => {
             if (liveProfile && (liveProfile.brandName || liveProfile.logoUrl || liveProfile.nameKh)) {
@@ -344,18 +348,44 @@ export default function App() {
           }
         );
 
-        // Subscribe to real-time products
+        // Subscribe to real-time products immediately so uploaded product images show right away
         unsubscribeProducts = subscribeToProducts(
           (liveProducts) => {
             if (liveProducts && liveProducts.length > 0) {
-              setProducts(liveProducts.map(sanitizeProductName));
+              setProducts((prev) => {
+                const prevMap = new Map<string, Product>(prev.map((item) => [item.id, item]));
+                return liveProducts.map((lp) => {
+                  const sanitized = sanitizeProductName(lp);
+                  // If Firestore item has no valid imageUrl, check if local product has an uploaded imageUrl
+                  if (
+                    !sanitized.imageUrl &&
+                    !clearedImageIdsRef.current.has(sanitized.id)
+                  ) {
+                    const localMatch = prevMap.get(sanitized.id);
+                    if (localMatch && isValidProductImageUrl(localMatch.imageUrl)) {
+                      const preserved = { ...sanitized, imageUrl: localMatch.imageUrl };
+                      // Sync preserved uploaded image back to Firestore in background
+                      saveProductToFirestore(preserved).catch(() => {});
+                      return preserved;
+                    }
+                  }
+                  return sanitized;
+                });
+              });
               setIsFirebaseSynced(true);
               setFirebaseError(null);
+              setIsDatabaseLoading(false);
+            } else {
+              // Seed initial data only if Firestore collection is completely empty
+              initializeFirestoreDataIfEmpty().finally(() => {
+                setIsDatabaseLoading(false);
+              });
             }
           },
           (err) => {
             console.warn('Firebase products sync offline/warning:', err);
             setFirebaseError(err.message);
+            setIsDatabaseLoading(false);
           }
         );
 
@@ -411,6 +441,7 @@ export default function App() {
       } catch (err: any) {
         console.error('Error initializing Firebase in App:', err);
         setFirebaseError(err?.message || 'Firebase sync error');
+        setIsDatabaseLoading(false);
       }
     };
 
@@ -480,20 +511,30 @@ export default function App() {
 
   // Product CRUD with Firestore sync
   const handleAddProduct = async (newProduct: Product) => {
-    setProducts((prev) => [newProduct, ...prev]);
+    const cleaned = sanitizeProductName(newProduct);
+    if (cleaned.imageUrl) {
+      clearedImageIdsRef.current.delete(cleaned.id);
+    }
+    setProducts((prev) => [cleaned, ...prev]);
     try {
-      await saveProductToFirestore(newProduct);
+      await saveProductToFirestore(cleaned);
     } catch (e) {
       console.error('Failed to save product to Firestore', e);
     }
   };
 
   const handleUpdateProduct = async (updated: Product) => {
+    const cleaned = sanitizeProductName(updated);
+    if (!cleaned.imageUrl) {
+      clearedImageIdsRef.current.add(cleaned.id);
+    } else {
+      clearedImageIdsRef.current.delete(cleaned.id);
+    }
     setProducts((prev) =>
-      prev.map((p) => (p.id === updated.id ? updated : p))
+      prev.map((p) => (p.id === cleaned.id ? cleaned : p))
     );
     try {
-      await saveProductToFirestore(updated);
+      await saveProductToFirestore(cleaned);
     } catch (e) {
       console.error('Failed to update product in Firestore', e);
     }
@@ -567,7 +608,7 @@ export default function App() {
   };
 
   const handleResetFactory = async () => {
-    setProducts(INITIAL_PRODUCTS);
+    setProducts(INITIAL_PRODUCTS.map(sanitizeProductName));
     setCategories(INITIAL_CATEGORIES);
     localStorage.removeItem(STORAGE_KEY_PRODUCTS);
     localStorage.removeItem(STORAGE_KEY_CATEGORIES);
@@ -673,9 +714,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-['Battambang'] text-slate-800 antialiased selection:bg-blue-600 selection:text-white">
-      {/* App Launch Splash & Loading Screen */}
-      <LoadingScreen isLoading={isInitialLoading} companyProfile={companyProfile} />
-
       {/* When Admin is Logged In, display the full-screen Admin Dashboard with standard docked sidebar */}
       {activeTab === 'admin' && isAdminLoggedIn ? (
         <AdminDashboard
@@ -685,6 +723,7 @@ export default function App() {
           authSettings={authSettings}
           bankAccounts={bankAccounts}
           orders={orders}
+          isLoading={isDatabaseLoading}
           isFirebaseSynced={isFirebaseSynced}
           firebaseError={firebaseError}
           onUpdateProduct={handleUpdateProduct}
@@ -738,6 +777,7 @@ export default function App() {
                 categories={categories}
                 currency={currency}
                 priceMode={priceMode}
+                isLoading={isDatabaseLoading}
                 onSelectProduct={handleSelectProduct}
                 onAddToCart={handleAddToCart}
                 searchQuery={searchQuery}
@@ -756,6 +796,7 @@ export default function App() {
                 allProducts={products}
                 currency={currency}
                 priceMode={priceMode}
+                isLoading={isDatabaseLoading}
                 onBack={() => setActiveTab('catalog')}
                 onSelectProduct={handleSelectProduct}
                 onAddToCart={handleAddToCart}

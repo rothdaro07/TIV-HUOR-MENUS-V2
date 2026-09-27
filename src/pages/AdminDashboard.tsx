@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { Product, Currency, Category, CompanyProfile, AdminAuthSettings, SystemBackupData, BankPaymentAccount, Order, ProductGroupId } from '../types';
 import { ProductBagIllustration } from '../components/ProductBagIllustration';
+import { AdminTableRowSkeleton } from '../components/CatalogSkeleton';
 import { AdminProductForm } from './AdminProductForm';
 import { AdminCategoryManager } from '../components/AdminCategoryManager';
 import { AdminCompanySettings } from '../components/AdminCompanySettings';
@@ -60,6 +61,7 @@ interface AdminDashboardProps {
   authSettings?: AdminAuthSettings;
   bankAccounts?: BankPaymentAccount[];
   orders?: Order[];
+  isLoading?: boolean;
   isFirebaseSynced?: boolean;
   firebaseError?: string | null;
   onUpdateProduct: (product: Product) => void;
@@ -113,6 +115,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   authSettings = { email: DEFAULT_ADMIN_EMAIL, isEmailVerified: true, password: DEFAULT_ADMIN_PASSWORD },
   bankAccounts = INITIAL_BANK_ACCOUNTS,
   orders = [],
+  isLoading = false,
   isFirebaseSynced = true,
   firebaseError,
   onUpdateProduct,
@@ -1140,7 +1143,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 font-['Kantumruy_Pro']">
-                    {filteredProducts.map((product, index) => {
+                    {isLoading || products.length === 0 ? (
+                      <AdminTableRowSkeleton rows={6} cols={9} />
+                    ) : (
+                    filteredProducts.map((product, index) => {
                       const isQuickEditing = quickPriceEditId === product.id;
                       const isDeleting = deleteConfirmId === product.id;
                       const isOverseas = product.stockStatus === 'overseas_stock';
@@ -1329,7 +1335,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </td>
                         </tr>
                       );
-                    })}
+                    })
+                    )}
                   </tbody>
                 </table>
               </div>
