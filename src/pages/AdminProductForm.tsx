@@ -1,29 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
-  ArrowLeft,
-  Save,
-  Sparkles,
-  Plus,
+  X,
+  Upload,
   Trash2,
+  Loader2,
+  ImageOff,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle,
+  TableProperties,
+  Plus,
+  Eye,
   Tractor,
   FlaskConical,
   Sprout,
-  Layers,
   Leaf,
-  Mountain,
+  Layers,
   Wheat,
-  Wrench,
-  ShieldCheck,
-  Zap,
-  Boxes,
-  Globe,
-  PackageCheck,
-  Check,
+  Sparkles,
 } from 'lucide-react';
-import { Product, Category, ProductGroupId, ProductPackagingOption, StockStatus } from '../types';
-import { ImageUploader } from '../components/ImageUploader';
-import { ProductBagIllustration } from '../components/ProductBagIllustration';
+import { Product, Category, ProductGroupId, StockStatus } from '../types';
+import { ProductBagIllustration, isValidProductImageUrl } from '../components/ProductBagIllustration';
+import { ProductSpecTable } from '../components/ProductSpecTable';
 import { INITIAL_CATEGORIES, PRODUCT_GROUPS } from '../data/initialProducts';
+import { uploadToCloudinary } from '../lib/cloudinary';
 import { getDefaultChemicalSizes } from '../utils/pricing';
 
 interface AdminProductFormProps {
@@ -34,1816 +34,1485 @@ interface AdminProductFormProps {
   onQuickAddCategory?: (category: Category) => void;
 }
 
+const GROUP_DISPLAY_LABELS: Record<string, string> = {
+  machinery: 'Machinery (គ្រឿងចក្រកសិកម្ម)',
+  chemical_fertilizer: 'Chemical Fertilizer (ជីគីមី)',
+  organic_fertilizer: 'Organic Fertilizer (ជីសរីរាង្គ)',
+  compost_fertilizer: 'Compost Fertilizer (ជីកំប៉ុស)',
+  soil_raw_material: 'Soil Raw Material (វត្ថុធាតុដើមដី)',
+  feed_raw_material: 'Feed Raw Material (វត្ថុធាតុដើមចំណី)',
+  mushroom_nutrient: 'Mushroom Nutrients (អាហារផ្សិត)',
+};
+
+const SUBCATEGORY_SHORT_EN: Record<string, string> = {
+  tractor: 'Tractor',
+  harvester: 'Harvester',
+  sprayer: 'Sprayer',
+  machinery_parts: 'Parts & Tools',
+  NPK: 'NPK',
+  Single: 'Single',
+  Special: 'Soil Improver',
+  Foliar: 'Foliar',
+  SuperHumic: 'SuperHumic',
+  Organic: 'Organic Pellet',
+  LiquidOrganic: 'Liquid Organic',
+  BioCompost: 'BioCompost',
+  MicrobialCompost: 'Microbial Compost',
+  CompostInoculant: 'EM Inoculant',
+  Dolomite: 'Dolomite',
+  Zeolite: 'Zeolite',
+  AgriLime: 'Agri Lime',
+  RockPhosphate: 'Rock Phosphate',
+  SoybeanMeal: 'Soybean Meal',
+  RiceBran: 'Rice Bran',
+  FishMeal: 'Fish Meal',
+  FeedPremix: 'Feed Premix',
+  MushroomBran: 'Substrate Bran',
+  MushroomLime: 'Mushroom Lime',
+  MushroomSpawn: 'Spawn',
+  MushroomTools: 'Mushroom Tools',
+};
+
+function compressImageToDataUrl(file: File, maxDim = 800, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      const img = new window.Image();
+      img.onload = () => {
+        try {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
+export function getInitialUnitPackage(product?: Product | null): string {
+  if (!product) return '';
+  if (product.packagingSize) {
+    const pkg = product.packagingSize.trim();
+    if (/^[a-zA-Z0-9\s./-]+$/.test(pkg)) {
+      return pkg.replace(/^\/\s*/, '');
+    }
+  }
+  if (product.groupId === 'machinery') {
+    return 'unit';
+  }
+  const w = (product.weight || '').trim();
+  if (w && w !== '1,950kg' && w !== '3,650kg' && w !== '420kg') {
+    if (w.toLowerCase().includes('bag') || w.toLowerCase().includes('unit') || w.toLowerCase().includes('bottle')) {
+      return w;
+    }
+    return `${w} bag`;
+  }
+  return '50kg bag';
+}
+
 export const AdminProductForm: React.FC<AdminProductFormProps> = ({
   initialProduct,
   categories = INITIAL_CATEGORIES,
   onSave,
   onCancel,
-  onQuickAddCategory,
 }) => {
   const isEditing = Boolean(initialProduct);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [isAddingNewCatModal, setIsAddingNewCatModal] = useState(false);
-  const [newCatKh, setNewCatKh] = useState('');
-  const [newCatEn, setNewCatEn] = useState('');
-
-  const currentGroup = initialProduct?.groupId || 'chemical_fertilizer';
-  const matchingGroupObj = PRODUCT_GROUPS.find((g) => g.id === currentGroup);
-
-  const [formData, setFormData] = useState<Partial<Product>>({
-    id: initialProduct?.id || `sku-${Date.now()}`,
-    name: initialProduct?.name || '',
-    nameKh: initialProduct?.nameKh || '',
-    nicknameKh: initialProduct?.nicknameKh || '',
-    groupId: currentGroup,
-    groupKh: initialProduct?.groupKh || matchingGroupObj?.nameKh || 'ជីគីមី',
-    category: initialProduct?.category || categories[0]?.id || 'NPK',
-    categoryKh: initialProduct?.categoryKh || categories[0]?.nameKh || 'ជីគីមី NPK',
-    npk: initialProduct?.npk || '',
-    usage: initialProduct?.usage || '',
-    detailedUsage: initialProduct?.detailedUsage || '',
-    packagingSize: initialProduct?.packagingSize || (currentGroup === 'machinery' ? '១ គ្រឿង (Full Set)' : currentGroup === 'raw_material' ? 'Big Bag 1,000kg (Jumbo)' : 'បាវ ៥០ គីឡូក្រាម'),
-    weight: initialProduct?.weight || (currentGroup === 'machinery' ? '1,950kg' : currentGroup === 'raw_material' ? '1,000kg' : '50kg'),
-    price: initialProduct?.price || (currentGroup === 'machinery' ? 12000 : 25),
-    imageUrl: initialProduct?.imageUrl || '',
-    order: initialProduct?.order || 99,
-    registrationNo: initialProduct?.registrationNo || '',
-    bagColorTheme: initialProduct?.bagColorTheme || 'rainbow',
-    granuleColor: initialProduct?.granuleColor || 'mixed-pink-white',
-
-    // Stock & Inventory
-    stockStatus: initialProduct?.stockStatus || 'in_stock',
-    stockQty: initialProduct?.stockQty ?? (currentGroup === 'machinery' ? 10 : 200),
-    stockUnit: initialProduct?.stockUnit || (currentGroup === 'machinery' ? 'គ្រឿង' : 'បាវ'),
-
-    // Packaging Sizes
-    availableSizes: initialProduct?.availableSizes && initialProduct.availableSizes.length > 0
-      ? initialProduct.availableSizes
-      : currentGroup === 'chemical_fertilizer'
-      ? getDefaultChemicalSizes(initialProduct?.price || 35)
-      : [],
-
-    // Specific Specs
-    machinerySpecs: {
-      brandModel: initialProduct?.machinerySpecs?.brandModel || '',
-      horsepower: initialProduct?.machinerySpecs?.horsepower || '',
-      engineType: initialProduct?.machinerySpecs?.engineType || '',
-      driveSystem: initialProduct?.machinerySpecs?.driveSystem || '',
-      fuelConsumption: initialProduct?.machinerySpecs?.fuelConsumption || '',
-      workingCapacity: initialProduct?.machinerySpecs?.workingCapacity || '',
-      warranty: initialProduct?.machinerySpecs?.warranty || 'ធានា ១២ ខែ និងសេវាថែទាំ',
-      condition: initialProduct?.machinerySpecs?.condition || 'ទំនិញថ្មី ១០០% (New Factory)',
-      dimensions: initialProduct?.machinerySpecs?.dimensions || '',
-    },
-    organicSpecs: {
-      organicMatter: initialProduct?.organicSpecs?.organicMatter || '≥ 45%',
-      humicFulvic: initialProduct?.organicSpecs?.humicFulvic || '15% Humic + 3% Fulvic',
-      microorganisms: initialProduct?.organicSpecs?.microorganisms || 'Trichoderma & Bacillus',
-      phAndMoisture: initialProduct?.organicSpecs?.phAndMoisture || 'pH 6.5 - 7.5, សំណើម ≤ 20%',
-      physicalForm: initialProduct?.organicSpecs?.physicalForm || 'គ្រាប់មូល Pellet 3-4mm',
-      certification: initialProduct?.organicSpecs?.certification || 'Organic Standard Passed',
-    },
-    rawMaterialSpecs: {
-      purity: initialProduct?.rawMaterialSpecs?.purity || '98.5% Pure Technical Grade',
-      chemicalFormula: initialProduct?.rawMaterialSpecs?.chemicalFormula || '',
-      particleSize: initialProduct?.rawMaterialSpecs?.particleSize || '100-200 Mesh Powder',
-      solubility: initialProduct?.rawMaterialSpecs?.solubility || 'រលាយក្នុងទឹកបានល្អ / pH 8.0',
-      standardGrade: initialProduct?.rawMaterialSpecs?.standardGrade || 'COA Inspection Passed',
-      origin: initialProduct?.rawMaterialSpecs?.origin || 'នាំចូលពីរោងចក្រស្តង់ដារអន្តរជាតិ',
-    },
-    chemicalSpecs: {
-      npkRatio: initialProduct?.chemicalSpecs?.npkRatio || '',
-      totalNutrient: initialProduct?.chemicalSpecs?.totalNutrient || '',
-      microElements: initialProduct?.chemicalSpecs?.microElements || '',
-      applicationRate: initialProduct?.chemicalSpecs?.applicationRate || '150 - 250 kg / ហិកតា',
-      granuleAppearance: initialProduct?.chemicalSpecs?.granuleAppearance || 'គ្រាប់ចម្រុះផ្កាឈូក-ស-បៃតង',
-    },
-    nutrients: {
-      n: initialProduct?.nutrients?.n || '',
-      p: initialProduct?.nutrients?.p || '',
-      k: initialProduct?.nutrients?.k || '',
-      zn: initialProduct?.nutrients?.zn || '',
-      mg: initialProduct?.nutrients?.mg || '',
-      ca: initialProduct?.nutrients?.ca || '',
-      s: initialProduct?.nutrients?.s || '',
-      fulvicAcid: initialProduct?.nutrients?.fulvicAcid || '',
-      other: initialProduct?.nutrients?.other || '',
-    },
-    benefits: initialProduct?.benefits || ['បង្កើនទិន្នផលខ្ពស់', 'ធន់រឹងមាំ និងមានប្រសិទ្ធភាពយូរអង្វែង'],
-    suitableCrops: initialProduct?.suitableCrops || ['ស្រូវ', 'ទុរេន', 'ស្វាយ', 'ដំឡូងមី', 'បន្លែ'],
-    isPopular: initialProduct?.isPopular ?? false,
-    isNew: initialProduct?.isNew ?? false,
-    inStock: initialProduct?.inStock ?? true,
-  });
-
-  const [benefitInput, setBenefitInput] = useState('');
-  const [cropInput, setCropInput] = useState('');
-
-  const handleGroupChange = (nextGroupId: ProductGroupId) => {
-    const groupObj = PRODUCT_GROUPS.find((g) => g.id === nextGroupId);
-    const matchingCats = categories.filter((c) => (c.groupId || 'chemical_fertilizer') === nextGroupId);
-    const firstMatchingCat = matchingCats[0] || categories[0];
-
-    // Adjust defaults based on new group
-    let defaultPackaging = formData.packagingSize;
-    let defaultWeight = formData.weight;
-    let defaultPrice = formData.price;
-    let defaultNpk = formData.npk;
-    let defaultUnit = formData.stockUnit || 'បាវ';
-    let defaultSizes = formData.availableSizes || [];
-
-    if (nextGroupId === 'machinery') {
-      defaultPackaging = '១ គ្រឿង (Full Set)';
-      defaultWeight = '1,950kg';
-      defaultPrice = formData.price && formData.price < 500 ? 12500 : formData.price;
-      defaultNpk = formData.npk?.includes('HP') ? formData.npk : '50 HP / 4WD';
-      defaultUnit = 'គ្រឿង';
-      defaultSizes = [];
-    } else if (nextGroupId === 'raw_material') {
-      defaultPackaging = 'Big Bag 1,000kg (Jumbo)';
-      defaultWeight = '1,000kg';
-      defaultPrice = formData.price && formData.price > 1000 ? 250 : formData.price;
-      defaultNpk = formData.npk || 'Dolomite CaMg(CO3)2';
-      defaultUnit = 'បាវ';
-    } else if (nextGroupId === 'organic_fertilizer') {
-      defaultPackaging = 'បាវ ៥០ គីឡូក្រាម';
-      defaultWeight = '50kg';
-      defaultPrice = formData.price && formData.price > 1000 ? 22.5 : formData.price;
-      defaultNpk = formData.npk || 'Super Humic + OM 45%';
-      defaultUnit = 'បាវ';
-    } else {
-      defaultPackaging = 'បាវ ៥០ គីឡូក្រាម';
-      defaultWeight = '50kg';
-      defaultPrice = formData.price && formData.price > 1000 ? 28.0 : formData.price;
-      defaultNpk = formData.npk || '27-12-6+TE';
-      defaultUnit = 'បាវ';
-      if (!defaultSizes || defaultSizes.length === 0) {
-        defaultSizes = getDefaultChemicalSizes(defaultPrice || 35);
-      }
-    }
-
-    setFormData((prev) => ({
-      ...prev,
-      groupId: nextGroupId,
-      groupKh: groupObj?.nameKh || 'ជីគីមី',
-      category: firstMatchingCat ? firstMatchingCat.id : prev.category,
-      categoryKh: firstMatchingCat ? firstMatchingCat.nameKh : prev.categoryKh,
-      packagingSize: defaultPackaging,
-      weight: defaultWeight,
-      price: defaultPrice,
-      npk: defaultNpk,
-      stockUnit: defaultUnit,
-      availableSizes: defaultSizes,
-    }));
-  };
-
-  // Size Options Handlers
-  const handleAddSizeOption = () => {
-    const basePrice = formData.price || 30;
-    const newOption: ProductPackagingOption = {
-      size: '10kg',
-      labelKh: 'កញ្ចប់ ១០ គីឡូក្រាម',
-      weight: '10kg',
-      price: Number((basePrice * 0.25).toFixed(2)),
-      wholesalePrice: Number((basePrice * 0.25 * 0.92).toFixed(2)),
-      isDefault: false,
-    };
-    setFormData((prev) => ({
-      ...prev,
-      availableSizes: [...(prev.availableSizes || []), newOption],
-    }));
-  };
-
-  const handleRemoveSizeOption = (index: number) => {
-    setFormData((prev) => {
-      const updated = (prev.availableSizes || []).filter((_, i) => i !== index);
-      // Ensure at least one is default if list is not empty
-      if (updated.length > 0 && !updated.some((s) => s.isDefault)) {
-        updated[0].isDefault = true;
-      }
-      return { ...prev, availableSizes: updated };
+  // Merge categories with INITIAL_CATEGORIES so all 26 subcategories are always available
+  const allCategories = React.useMemo(() => {
+    const map = new Map<string, Category>();
+    INITIAL_CATEGORIES.forEach((c) => map.set(c.id, c));
+    categories.forEach((c) => {
+      const existing = map.get(c.id);
+      map.set(c.id, { ...existing, ...c });
     });
-  };
+    return Array.from(map.values());
+  }, [categories]);
 
-  const handleUpdateSizeOption = (index: number, field: keyof ProductPackagingOption, value: any) => {
-    setFormData((prev) => {
-      const updated = [...(prev.availableSizes || [])];
-      if (field === 'isDefault' && value === true) {
-        updated.forEach((s, i) => {
-          s.isDefault = i === index;
-        });
+  const initialGroup: ProductGroupId =
+    (initialProduct?.groupId as ProductGroupId) || 'machinery';
+
+  const initialGroupCategories = allCategories.filter(
+    (c) => (c.groupId || 'chemical_fertilizer') === initialGroup
+  );
+
+  const [nameKh, setNameKh] = useState(initialProduct?.nameKh || '');
+  const [nameEn, setNameEn] = useState(initialProduct?.name || '');
+  const [groupId, setGroupId] = useState<ProductGroupId>(initialGroup);
+  const [categoryId, setCategoryId] = useState<string>(
+    initialProduct?.category || initialGroupCategories[0]?.id || 'tractor'
+  );
+  const [priceStr, setPriceStr] = useState<string>(
+    initialProduct?.price !== undefined ? String(initialProduct.price) : ''
+  );
+  const [wholesalePriceStr, setWholesalePriceStr] = useState(
+    initialProduct?.wholesalePrice !== undefined ? String(initialProduct.wholesalePrice) : ''
+  );
+  const [costPriceStr, setCostPriceStr] = useState(
+    initialProduct?.costPrice !== undefined ? String(initialProduct.costPrice) : ''
+  );
+  const [productCode, setProductCode] = useState(initialProduct?.code || '');
+  const [unitPackage, setUnitPackage] = useState<string>(
+    getInitialUnitPackage(initialProduct)
+  );
+  const [stockQtyStr, setStockQtyStr] = useState<string>(
+    initialProduct?.stockQty !== undefined ? String(initialProduct.stockQty) : '20'
+  );
+  const [stockType, setStockType] = useState<StockStatus>(
+    initialProduct?.stockStatus === 'overseas_stock'
+      ? 'overseas_stock'
+      : initialProduct?.stockStatus === 'out_of_stock'
+      ? 'out_of_stock'
+      : 'in_stock'
+  );
+  const [imageUrl, setImageUrl] = useState<string>(
+    isValidProductImageUrl(initialProduct?.imageUrl) ? initialProduct!.imageUrl.trim() : ''
+  );
+
+  // =========================================================================
+  // តារាងលក្ខណៈ (Specification Table State by Group)
+  // =========================================================================
+  const [showSpecTableEditor, setShowSpecTableEditor] = useState(true);
+  const [showSpecPreview, setShowSpecPreview] = useState(false);
+
+  // Common Spec fields
+  const [npk, setNpk] = useState(initialProduct?.npk || '');
+  const [usage, setUsage] = useState(initialProduct?.usage || '');
+  const [registrationNo, setRegistrationNo] = useState(
+    initialProduct?.registrationNo || 'TH-STD-2026'
+  );
+  const [suitableCropsStr, setSuitableCropsStr] = useState(
+    (initialProduct?.suitableCrops || ['ស្រូវ', 'ដំណាំហូបផ្លែ', 'បន្លែគ្រប់ប្រភេទ']).join(', ')
+  );
+
+  // 1. Machinery Specs (គ្រឿងចក្រកសិកម្ម)
+  const [machBrandModel, setMachBrandModel] = useState(
+    initialProduct?.machinerySpecs?.brandModel || initialProduct?.name || ''
+  );
+  const [machHorsepower, setMachHorsepower] = useState(
+    initialProduct?.machinerySpecs?.horsepower || initialProduct?.npk || '50 HP / 4WD'
+  );
+  const [machEngineType, setMachEngineType] = useState(
+    initialProduct?.machinerySpecs?.engineType || 'Diesel 4 ស៊ីឡាំង Direct Injection'
+  );
+  const [machDriveSystem, setMachDriveSystem] = useState(
+    initialProduct?.machinerySpecs?.driveSystem ||
+      initialProduct?.machinerySpecs?.transmission ||
+      'Synchro-Shuttle 8F x 8R / 4WD'
+  );
+  const [machFuelConsumption, setMachFuelConsumption] = useState(
+    initialProduct?.machinerySpecs?.fuelConsumption || '3.5 - 4.8 L/ម៉ោង'
+  );
+  const [machWorkingCapacity, setMachWorkingCapacity] = useState(
+    initialProduct?.machinerySpecs?.workingCapacity || initialProduct?.usage || '1.5 - 2.5 ហិកតា/ថ្ងៃ'
+  );
+  const [machWarranty, setMachWarranty] = useState(
+    initialProduct?.machinerySpecs?.warranty || 'ធានា ១ ឆ្នាំ គ្រឿងបន្លាស់គ្រប់គ្រាន់'
+  );
+  const [machCondition, setMachCondition] = useState(
+    initialProduct?.machinerySpecs?.condition || 'ទំនិញថ្មី ១០០% (New Factory)'
+  );
+  const [machDimensions, setMachDimensions] = useState(
+    initialProduct?.machinerySpecs?.dimensions ||
+      initialProduct?.machinerySpecs?.dimensionsWeight ||
+      initialProduct?.weight ||
+      '1,850 kg'
+  );
+
+  // 2. Chemical Fertilizer Specs (ជីគីមី)
+  const [chemNutrientN, setChemNutrientN] = useState(initialProduct?.nutrients?.n || '');
+  const [chemNutrientP, setChemNutrientP] = useState(initialProduct?.nutrients?.p || '');
+  const [chemNutrientK, setChemNutrientK] = useState(initialProduct?.nutrients?.k || '');
+  const [chemNutrientTE, setChemNutrientTE] = useState(
+    initialProduct?.nutrients?.other ||
+      initialProduct?.chemicalSpecs?.microNutrientsTE ||
+      ''
+  );
+  const [chemGranuleShape, setChemGranuleShape] = useState(
+    initialProduct?.chemicalSpecs?.granuleColorShape || 'គ្រាប់ចម្រុះគុណភាពខ្ពស់ រលាយសព្វល្អ'
+  );
+  const [chemAppRate, setChemAppRate] = useState(
+    initialProduct?.chemicalSpecs?.applicationRate || '150 - 250 គីឡូក្រាម / ហិកតា'
+  );
+
+  // 3. Organic & Compost Specs (ជីសរីរាង្គ & ជីកំប៉ុស)
+  const [orgMatter, setOrgMatter] = useState(
+    initialProduct?.organicSpecs?.organicMatter ||
+      initialProduct?.organicSpecs?.organicMatterOM ||
+      '≥ 45% (High Organic Matter)'
+  );
+  const [orgHumicFulvic, setOrgHumicFulvic] = useState(
+    initialProduct?.organicSpecs?.humicFulvic ||
+      initialProduct?.organicSpecs?.humicFulvicAcid ||
+      '15% Humic + 3% Fulvic Acid'
+  );
+  const [orgMicrobes, setOrgMicrobes] = useState(
+    initialProduct?.organicSpecs?.microorganisms ||
+      'Trichoderma & Bacillus (1x10^8 CFU/g)'
+  );
+  const [orgPhMoisture, setOrgPhMoisture] = useState(
+    initialProduct?.organicSpecs?.phAndMoisture || 'pH 6.5 - 7.5 (សំណើម ≤ 20%)'
+  );
+  const [orgPhysicalForm, setOrgPhysicalForm] = useState(
+    initialProduct?.organicSpecs?.physicalForm ||
+      initialProduct?.organicSpecs?.formType ||
+      'គ្រាប់មូល Pellet (ទំហំ 3-4mm)'
+  );
+  const [orgCertification, setOrgCertification] = useState(
+    initialProduct?.organicSpecs?.certification || 'Organic Standard GAP / ISO'
+  );
+
+  // 4. Raw Materials & Mushroom Nutrients (វត្ថុធាតុដើមដី, ចំណី, អាហារផ្សិត)
+  const [rawPurity, setRawPurity] = useState(
+    initialProduct?.rawMaterialSpecs?.purity ||
+      initialProduct?.rawMaterialSpecs?.purityGrade ||
+      '98.5% Pure Grade'
+  );
+  const [rawFormula, setRawFormula] = useState(
+    initialProduct?.rawMaterialSpecs?.chemicalFormula || initialProduct?.npk || ''
+  );
+  const [rawParticleSize, setRawParticleSize] = useState(
+    initialProduct?.rawMaterialSpecs?.particleSize ||
+      initialProduct?.rawMaterialSpecs?.particleMeshSize ||
+      '100 - 200 Mesh Powder / Fine'
+  );
+  const [rawSolubility, setRawSolubility] = useState(
+    initialProduct?.rawMaterialSpecs?.solubility ||
+      initialProduct?.rawMaterialSpecs?.solubilityPH ||
+      'គុណភាពស្តង់ដារ / សំណើមទាប'
+  );
+  const [rawStandardGrade, setRawStandardGrade] = useState(
+    initialProduct?.rawMaterialSpecs?.standardGrade ||
+      initialProduct?.rawMaterialSpecs?.standardCOA ||
+      'COA Inspection Standard Passed'
+  );
+  const [rawOrigin, setRawOrigin] = useState(
+    initialProduct?.rawMaterialSpecs?.origin ||
+      initialProduct?.rawMaterialSpecs?.originCountry ||
+      'នាំចូលផ្ទាល់ពីរោងចក្រស្តង់ដារអន្តរជាតិ'
+  );
+
+  // Custom extra rows in តារាងលក្ខណៈ
+  const [customSpecs, setCustomSpecs] = useState<{ labelKh: string; value: string }[]>(
+    initialProduct?.specifications && initialProduct.specifications.length > 0
+      ? initialProduct.specifications
+      : []
+  );
+
+  // Upload state
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const groupCategories = allCategories.filter(
+    (c) => (c.groupId || 'chemical_fertilizer') === groupId
+  );
+
+  const handleGroupChange = (newGroupId: ProductGroupId) => {
+    setGroupId(newGroupId);
+    const matching = allCategories.filter(
+      (c) => (c.groupId || 'chemical_fertilizer') === newGroupId
+    );
+    if (matching.length > 0) {
+      setCategoryId(matching[0].id);
+    }
+    if (!unitPackage || unitPackage === 'unit' || unitPackage === '50kg bag' || unitPackage === 'bag') {
+      if (newGroupId === 'machinery') {
+        setUnitPackage('unit');
+      } else if (newGroupId === 'mushroom_nutrient') {
+        setUnitPackage('bag');
       } else {
-        updated[index] = { ...updated[index], [field]: value };
+        setUnitPackage('50kg bag');
       }
-      return { ...prev, availableSizes: updated };
-    });
-  };
-
-  const handleGenerateStandardSizes = () => {
-    const basePrice = formData.price || 35;
-    const standardSizes = getDefaultChemicalSizes(basePrice);
-    setFormData((prev) => ({
-      ...prev,
-      availableSizes: standardSizes,
-    }));
-  };
-
-  const handleCategoryChange = (catId: string) => {
-    const selectedCat = categories.find((c) => c.id === catId);
-    setFormData((prev) => ({
-      ...prev,
-      category: catId,
-      categoryKh: selectedCat ? selectedCat.nameKh : catId,
-    }));
-  };
-
-  const handleAddBenefit = () => {
-    if (benefitInput.trim()) {
-      setFormData((prev) => ({
-        ...prev,
-        benefits: [...(prev.benefits || []), benefitInput.trim()],
-      }));
-      setBenefitInput('');
     }
   };
 
-  const handleRemoveBenefit = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      benefits: (prev.benefits || []).filter((_, i) => i !== index),
-    }));
+  const handleAddCustomSpecRow = () => {
+    setCustomSpecs((prev) => [...prev, { labelKh: '', value: '' }]);
   };
 
-  const handleAddCrop = () => {
-    if (cropInput.trim()) {
-      setFormData((prev) => ({
-        ...prev,
-        suitableCrops: [...(prev.suitableCrops || []), cropInput.trim()],
-      }));
-      setCropInput('');
+  const handleUpdateCustomSpecRow = (index: number, field: 'labelKh' | 'value', val: string) => {
+    setCustomSpecs((prev) =>
+      prev.map((row, idx) => (idx === index ? { ...row, [field]: val } : row))
+    );
+  };
+
+  const handleRemoveCustomSpecRow = (index: number) => {
+    setCustomSpecs((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadProgress(15);
+    setUploadError(null);
+
+    try {
+      const uploadedUrl = await uploadToCloudinary(file, (pct) => {
+        setUploadProgress(pct);
+      });
+      setImageUrl(uploadedUrl);
+    } catch (err: any) {
+      console.warn('Cloudinary upload failed, using compressed local image:', err);
+      try {
+        const compressed = await compressImageToDataUrl(file);
+        setImageUrl(compressed);
+      } catch {
+        setUploadError('មិនអាចបញ្ចូលរូបភាពបានទេ សូមសាកល្បងម្តងទៀត');
+      }
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
-  const handleRemoveCrop = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      suitableCrops: (prev.suitableCrops || []).filter((_, i) => i !== index),
-    }));
+  const buildConstructedProduct = (): Product => {
+    const trimmedKh = nameKh.trim();
+    const trimmedEn = nameEn.trim();
+    const parsedPrice = parseFloat(priceStr);
+    const finalPrice = !isNaN(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
+
+    const parsedStock = parseInt(stockQtyStr, 10);
+    const finalStockQty =
+      stockType === 'out_of_stock'
+        ? 0
+        : !isNaN(parsedStock) && parsedStock >= 0
+        ? parsedStock
+        : 0;
+
+    const parsedWholesale = parseFloat(wholesalePriceStr);
+    const finalWholesale =
+      !isNaN(parsedWholesale) && parsedWholesale > 0 ? parsedWholesale : undefined;
+
+    const parsedCost = parseFloat(costPriceStr);
+    const finalCostPrice =
+      !isNaN(parsedCost) && parsedCost >= 0 ? parsedCost : initialProduct?.costPrice;
+
+    const groupObj = PRODUCT_GROUPS.find((g) => g.id === groupId);
+    const catObj =
+      allCategories.find((c) => c.id === categoryId) || groupCategories[0] || allCategories[0];
+
+    const cleanUnitPkg =
+      unitPackage.trim().replace(/^\/\s*/, '') ||
+      (groupId === 'machinery' ? 'unit' : '50kg bag');
+
+    const weightMatch = cleanUnitPkg.match(/(\d+(?:\.\d+)?\s*(?:kg|g|l|ml|ton))/i);
+    const extractedWeight =
+      groupId === 'machinery' && machDimensions.trim()
+        ? machDimensions.trim()
+        : weightMatch
+        ? weightMatch[1].replace(/\s+/g, '')
+        : initialProduct?.weight || cleanUnitPkg;
+
+    const extractedStockUnit = weightMatch
+      ? weightMatch[1].replace(/\s+/g, '')
+      : cleanUnitPkg;
+
+    const resolvedNpk =
+      groupId === 'machinery'
+        ? machHorsepower.trim() || npk.trim() || trimmedEn || trimmedKh
+        : groupId === 'soil_raw_material' ||
+          groupId === 'feed_raw_material' ||
+          groupId === 'mushroom_nutrient'
+        ? rawFormula.trim() || rawPurity.trim() || npk.trim() || trimmedEn || trimmedKh
+        : groupId === 'organic_fertilizer' || groupId === 'compost_fertilizer'
+        ? orgMatter.trim() || npk.trim() || trimmedEn || trimmedKh
+        : npk.trim() || trimmedEn || trimmedKh;
+
+    const parsedCrops = suitableCropsStr
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const cleanedCustomSpecs = customSpecs
+      .map((s) => ({ labelKh: s.labelKh.trim(), value: s.value.trim() }))
+      .filter((s) => s.labelKh && s.value);
+
+    return {
+      ...(initialProduct || {}),
+      id: initialProduct?.id || `prod-${Date.now()}`,
+      code: productCode.trim() || initialProduct?.code,
+      nameKh: trimmedKh || trimmedEn || 'ទំនិញថ្មី',
+      name: trimmedEn || trimmedKh || 'New Product',
+      nicknameKh: initialProduct?.nicknameKh || '',
+      groupId,
+      groupKh: groupObj?.nameKh || 'ជីគីមី',
+      category: catObj?.id || categoryId,
+      categoryKh: catObj?.nameKh || 'ជីគីមី NPK',
+      npk: resolvedNpk,
+      usage:
+        usage.trim() ||
+        (groupId === 'machinery' ? machWorkingCapacity.trim() : '') ||
+        initialProduct?.usage ||
+        `${trimmedKh || trimmedEn} គុណភាពខ្ពស់សម្រាប់កសិកម្មទំនើប`,
+      detailedUsage: initialProduct?.detailedUsage || usage.trim() || '',
+      packagingSize: cleanUnitPkg,
+      weight: extractedWeight,
+      price: finalPrice,
+      wholesalePrice: finalWholesale,
+      costPrice: finalCostPrice,
+      imageUrl: isValidProductImageUrl(imageUrl) ? imageUrl.trim() : '',
+      order: initialProduct?.order ?? 1,
+      registrationNo: registrationNo.trim() || 'TH-STD-2026',
+      bagColorTheme: initialProduct?.bagColorTheme || 'blue',
+      granuleColor: initialProduct?.granuleColor || 'white-pearl',
+      nutrients: {
+        ...(initialProduct?.nutrients || {}),
+        n: chemNutrientN.trim() || undefined,
+        p: chemNutrientP.trim() || undefined,
+        k: chemNutrientK.trim() || undefined,
+        other: chemNutrientTE.trim() || initialProduct?.nutrients?.other || undefined,
+      },
+      machinerySpecs:
+        groupId === 'machinery'
+          ? {
+              brandModel: machBrandModel.trim() || trimmedEn || trimmedKh,
+              horsepower: machHorsepower.trim(),
+              engineType: machEngineType.trim(),
+              driveSystem: machDriveSystem.trim(),
+              transmission: machDriveSystem.trim(),
+              fuelConsumption: machFuelConsumption.trim(),
+              workingCapacity: machWorkingCapacity.trim() || usage.trim(),
+              warranty: machWarranty.trim(),
+              condition: machCondition.trim(),
+              dimensions: machDimensions.trim(),
+              dimensionsWeight: machDimensions.trim(),
+            }
+          : initialProduct?.machinerySpecs,
+      chemicalSpecs:
+        groupId === 'chemical_fertilizer'
+          ? {
+              npkRatio: npk.trim() || trimmedEn,
+              microNutrientsTE: chemNutrientTE.trim(),
+              granuleColorShape: chemGranuleShape.trim(),
+              bagWeight: cleanUnitPkg,
+              registrationNo: registrationNo.trim(),
+              applicationRate: chemAppRate.trim(),
+            }
+          : initialProduct?.chemicalSpecs,
+      organicSpecs:
+        groupId === 'organic_fertilizer' || groupId === 'compost_fertilizer'
+          ? {
+              organicMatter: orgMatter.trim(),
+              organicMatterOM: orgMatter.trim(),
+              humicFulvic: orgHumicFulvic.trim(),
+              humicFulvicAcid: orgHumicFulvic.trim(),
+              microorganisms: orgMicrobes.trim(),
+              phAndMoisture: orgPhMoisture.trim(),
+              physicalForm: orgPhysicalForm.trim(),
+              formType: orgPhysicalForm.trim(),
+              certification: orgCertification.trim(),
+            }
+          : initialProduct?.organicSpecs,
+      rawMaterialSpecs:
+        groupId === 'soil_raw_material' ||
+        groupId === 'feed_raw_material' ||
+        groupId === 'mushroom_nutrient' ||
+        groupId === 'raw_material'
+          ? {
+              purity: rawPurity.trim(),
+              purityGrade: rawPurity.trim(),
+              chemicalFormula: rawFormula.trim() || npk.trim(),
+              particleSize: rawParticleSize.trim(),
+              particleMeshSize: rawParticleSize.trim(),
+              solubility: rawSolubility.trim(),
+              solubilityPH: rawSolubility.trim(),
+              packagingType: cleanUnitPkg,
+              standardGrade: rawStandardGrade.trim(),
+              standardCOA: rawStandardGrade.trim(),
+              origin: rawOrigin.trim(),
+              originCountry: rawOrigin.trim(),
+            }
+          : initialProduct?.rawMaterialSpecs,
+      specifications: cleanedCustomSpecs,
+      benefits: initialProduct?.benefits || [
+        'គុណភាពស្តង់ដារក្រុមហ៊ុន ទីវ ហៃ',
+        'បង្កើនទិន្នផល និងសន្សំសំចៃខ្ពស់',
+      ],
+      suitableCrops:
+        parsedCrops.length > 0
+          ? parsedCrops
+          : ['ស្រូវ', 'ដំណាំហូបផ្លែ', 'បន្លែគ្រប់ប្រភេទ'],
+      availableSizes:
+        initialProduct?.availableSizes && initialProduct.availableSizes.length > 0
+          ? initialProduct.availableSizes
+          : groupId === 'chemical_fertilizer' && finalPrice > 0
+          ? getDefaultChemicalSizes(finalPrice)
+          : [],
+      isPopular: initialProduct?.isPopular ?? false,
+      isNew: initialProduct?.isNew ?? false,
+      inStock: finalStockQty > 0 && stockType !== 'out_of_stock',
+      stockStatus: finalStockQty <= 0 ? 'out_of_stock' : stockType,
+      stockQty: finalStockQty,
+      stockUnit: extractedStockUnit,
+      updatedAt: new Date().toISOString(),
+    };
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.nameKh || !formData.price) {
-      alert('សូមបំពេញឈ្មោះទំនិញ និងតម្លៃឱ្យបានត្រឹមត្រូវ');
+    setFormError(null);
+
+    const trimmedKh = nameKh.trim();
+    const trimmedEn = nameEn.trim();
+    if (!trimmedKh && !trimmedEn) {
+      setFormError('សូមបញ្ចូលឈ្មោះទំនិញ (Name Khmer ឬ Name English)');
       return;
     }
 
-    onSave(formData as Product);
+    const finalProduct = buildConstructedProduct();
+    onSave(finalProduct);
   };
 
-  const activeGroup = formData.groupId || 'chemical_fertilizer';
+  const previewProduct = buildConstructedProduct();
+  const currentGroupObj = PRODUCT_GROUPS.find((g) => g.id === groupId);
+
+  const getGroupBadgeIcon = () => {
+    switch (groupId) {
+      case 'machinery':
+        return <Tractor className="w-4 h-4 text-amber-600" />;
+      case 'organic_fertilizer':
+        return <Sprout className="w-4 h-4 text-emerald-600" />;
+      case 'compost_fertilizer':
+        return <Leaf className="w-4 h-4 text-lime-600" />;
+      case 'soil_raw_material':
+        return <Layers className="w-4 h-4 text-yellow-600" />;
+      case 'feed_raw_material':
+        return <Wheat className="w-4 h-4 text-orange-600" />;
+      case 'mushroom_nutrient':
+        return <Sparkles className="w-4 h-4 text-teal-600" />;
+      default:
+        return <FlaskConical className="w-4 h-4 text-[#165b9e]" />;
+    }
+  };
 
   return (
-    <div className="space-y-6 pb-16">
-      {/* Top Header */}
-      <div className="flex items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+    <div
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-[1px] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-7 shadow-2xl border border-slate-200/90 my-auto max-h-[92vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-['Plus_Jakarta_Sans','Battambang',sans-serif]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-100">
           <div>
-            <h2 className="text-lg sm:text-xl font-bold font-['Battambang'] text-[#1E5FA8] flex items-center gap-2">
-              {activeGroup === 'machinery' && <Tractor className="w-5 h-5 text-amber-500" />}
-              {activeGroup === 'chemical_fertilizer' && <FlaskConical className="w-5 h-5 text-blue-600" />}
-              {activeGroup === 'organic_fertilizer' && <Sprout className="w-5 h-5 text-emerald-600" />}
-              {activeGroup === 'raw_material' && <Layers className="w-5 h-5 text-purple-600" />}
-              <span>
-                {isEditing
-                  ? `កែប្រែទិន្នន័យ (${formData.groupKh || 'ទំនិញ'})`
-                  : `បន្ថែមទំនិញថ្មី (${formData.groupKh || 'ទំនិញ'})`}
-              </span>
+            <h2 className="text-lg sm:text-xl font-bold text-slate-900">
+              {isEditing ? 'Edit product (កែប្រែទំនិញ)' : 'Add product (បន្ថែមទំនិញថ្មី)'}
             </h2>
-            <p className="text-xs text-slate-500 font-['Kantumruy_Pro']">
-              {isEditing ? `កូដ SKU: ${formData.id}` : 'បង្កើតទិន្នន័យមុខទំនិញថ្មីក្នុងកាតាឡុក ទីវ ហៃ'}
+            <p className="text-xs text-slate-500 mt-0.5">
+              ជ្រើសរើសក្រុមទំនិញ (Group) ដើម្បីបំពេញតារាងលក្ខណៈបច្ចេកទេសដោយស្វ័យប្រវត្តិ
             </p>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors font-['Kantumruy_Pro']"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            title="Close"
           >
-            បោះបង់
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            className="px-5 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors font-['Kantumruy_Pro'] cursor-pointer"
-          >
-            <Save className="w-4 h-4" />
-            <span>រក្សាទុកទិន្នន័យ</span>
+            <X className="w-5 h-5" />
           </button>
         </div>
-      </div>
 
-      {/* Main Form */}
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Form Fields (8 cols) */}
-        <div className="lg:col-span-8 space-y-6">
+        {formError && (
+          <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{formError}</span>
+          </div>
+        )}
 
-          {/* 1. Main Group Selector Card */}
-          <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-600" />
-                ជ្រើសរើសមុខទំនិញធំ (Main Product Group)
-              </h3>
-              <span className="text-[11px] font-medium text-slate-500 font-['Kantumruy_Pro']">
-                ព័ត៌មានទូទៅ និងលក្ខណៈបច្ចេកទេសនឹងផ្លាស់ប្តូរទៅតាមមុខទំនិញនេះ
-              </span>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Row 1: Name (Khmer) & Name (English) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Name (Khmer) / ឈ្មោះខ្មែរ <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={nameKh}
+                onChange={(e) => setNameKh(e.target.value)}
+                placeholder="ឧ. ត្រាក់ទ័រ 50 សេះ ឬ ជី NPK 16-16-8"
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors"
+              />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
-              {PRODUCT_GROUPS.map((grp) => {
-                const isSelected = activeGroup === grp.id;
-                return (
-                  <button
-                    key={grp.id}
-                    type="button"
-                    onClick={() => handleGroupChange(grp.id)}
-                    className={`flex flex-col items-center text-center p-2.5 rounded-2xl border transition-all cursor-pointer ${
-                      isSelected
-                        ? 'border-blue-600 bg-blue-50/70 text-blue-900 font-bold ring-2 ring-blue-300 shadow-xs'
-                        : 'border-slate-200 hover:border-slate-300 bg-slate-50/60 text-slate-700 font-medium'
-                    }`}
-                  >
-                    <div className="mb-1.5 p-2 rounded-xl bg-white shadow-2xs border border-slate-200">
-                      {grp.id === 'machinery' && <Tractor className="w-4 h-4 text-amber-600" />}
-                      {grp.id === 'chemical_fertilizer' && <FlaskConical className="w-4 h-4 text-blue-600" />}
-                      {grp.id === 'organic_fertilizer' && <Sprout className="w-4 h-4 text-emerald-600" />}
-                      {grp.id === 'compost_fertilizer' && <Leaf className="w-4 h-4 text-lime-600" />}
-                      {grp.id === 'soil_raw_material' && <Mountain className="w-4 h-4 text-yellow-600" />}
-                      {grp.id === 'feed_raw_material' && <Wheat className="w-4 h-4 text-orange-600" />}
-                      {grp.id === 'mushroom_nutrient' && <Sparkles className="w-4 h-4 text-teal-600" />}
-                      {grp.id === 'raw_material' && <Layers className="w-4 h-4 text-purple-600" />}
-                    </div>
-                    <span className="text-[11px] font-['Battambang'] leading-tight truncate w-full">{grp.nameKh}</span>
-                  </button>
-                );
-              })}
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Name (English) / ឈ្មោះអង់គ្លេស
+              </label>
+              <input
+                type="text"
+                value={nameEn}
+                onChange={(e) => setNameEn(e.target.value)}
+                placeholder="e.g. Tractor 50HP or NPK 16-16-8"
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors"
+              />
             </div>
           </div>
 
-          {/* 2. GENERAL INFORMATION (ព័ត៌មានទូទៅនៃមុខទំនិញ) - Tailored for each group */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4 shadow-xs">
-            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 flex items-center gap-2">
-                {activeGroup === 'machinery' && <Tractor className="w-4 h-4 text-amber-500" />}
-                {activeGroup === 'chemical_fertilizer' && <FlaskConical className="w-4 h-4 text-blue-600" />}
-                {activeGroup === 'organic_fertilizer' && <Sprout className="w-4 h-4 text-emerald-600" />}
-                {activeGroup === 'raw_material' && <Layers className="w-4 h-4 text-purple-600" />}
-                <span>
-                  ព័ត៌មានទូទៅនៃមុខទំនិញ ({formData.groupKh})
-                </span>
-              </h3>
-              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono font-bold">
-                Group: {activeGroup}
-              </span>
+          {/* Row 2: Group & Sub-category */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Group (ក្រុមទំនិញធំ)
+              </label>
+              <select
+                value={groupId}
+                onChange={(e) => handleGroupChange(e.target.value as ProductGroupId)}
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 font-medium outline-none transition-colors cursor-pointer"
+              >
+                {PRODUCT_GROUPS.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {GROUP_DISPLAY_LABELS[g.id] || `${g.name} (${g.nameKh})`}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-['Kantumruy_Pro'] text-xs">
-              
-              {/* Product Name (Khmer) */}
-              <div className="sm:col-span-2">
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'ឈ្មោះគ្រឿងចក្រ / ឧបករណ៍ជាភាសាខ្មែរ *'
-                    : activeGroup === 'raw_material'
-                    ? 'ឈ្មោះវត្ថុធាតុដើម / សារធាតុរ៉ែជាភាសាខ្មែរ *'
-                    : activeGroup === 'organic_fertilizer'
-                    ? 'ឈ្មោះជីសរីរាង្គជាភាសាខ្មែរ *'
-                    : 'ឈ្មោះជីគីមីជាភាសាខ្មែរ *'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.nameKh}
-                  onChange={(e) => setFormData({ ...formData, nameKh: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. ត្រាក់ទ័រ 50 សេះ TH-500 កង់ ៤ ជំនាន់ថ្មី'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. ម្សៅដូឡូមីត កម្ចាត់ជាតិជូរ គុណភាពខ្ពស់'
-                      : activeGroup === 'organic_fertilizer'
-                      ? 'ឧ. ជីសរីរាង្គ Super Humic ដីមាស'
-                      : 'ឧ. ជីគីមី NPK 27-12-6+TE'
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Sub-category (ប្រភេទទំនិញរង)
+              </label>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors cursor-pointer"
+              >
+                {groupCategories.map((cat) => {
+                  const shortEn = SUBCATEGORY_SHORT_EN[cat.id] || cat.name;
+                  return (
+                    <option key={cat.id} value={cat.id}>
+                      {shortEn} ({cat.nameKh})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 3: Price (USD) & Unit / package */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Price (USD) / តម្លៃលក់រាយ ($)
+              </label>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                value={priceStr}
+                onChange={(e) => setPriceStr(e.target.value)}
+                placeholder="e.g. 32.50"
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Unit / package (ខ្នាតវេចខ្ចប់)
+              </label>
+              <input
+                type="text"
+                value={unitPackage}
+                onChange={(e) => setUnitPackage(e.target.value)}
+                placeholder="e.g. 50kg bag, 25kg bag, unit"
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-colors"
+              />
+            </div>
+          </div>
+
+          {/* Row 4: Stock quantity & Stock type */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Stock quantity (ចំនួនក្នុងស្តុក)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={stockQtyStr}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setStockQtyStr(val);
+                  const num = parseInt(val, 10);
+                  if (num === 0) {
+                    setStockType('out_of_stock');
+                  } else if (stockType === 'out_of_stock' && num > 0) {
+                    setStockType('in_stock');
                   }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-medium outline-none"
-                />
+                }}
+                placeholder="0"
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+                Stock status (ស្ថានភាពស្តុក)
+              </label>
+              <select
+                value={stockType}
+                onChange={(e) => {
+                  const newStatus = e.target.value as StockStatus;
+                  setStockType(newStatus);
+                  if (newStatus === 'out_of_stock') {
+                    setStockQtyStr('0');
+                  } else if (parseInt(stockQtyStr, 10) <= 0) {
+                    setStockQtyStr('20');
+                  }
+                }}
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-xl text-sm text-slate-900 outline-none transition-colors cursor-pointer"
+              >
+                <option value="in_stock">In Stock - Local (មានស្តុកក្នុងស្រុក)</option>
+                <option value="overseas_stock">Overseas Stock (ស្តុកក្រៅប្រទេស)</option>
+                <option value="out_of_stock">Out of Stock (ដាច់ស្តុក = 0)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 5: Product Image Upload */}
+          <div>
+            <label className="block text-xs sm:text-sm font-medium text-slate-700 mb-1.5">
+              Product image (រូបភាពទំនិញ)
+            </label>
+            <div className="flex items-center gap-3.5 p-3 rounded-xl border border-slate-200 bg-slate-50/60">
+              <div className="w-14 h-14 rounded-xl bg-white border border-slate-200 overflow-hidden flex items-center justify-center shrink-0">
+                {isValidProductImageUrl(imageUrl) ? (
+                  <ProductBagIllustration
+                    product={previewProduct}
+                    size="sm"
+                    className="w-full h-full"
+                  />
+                ) : (
+                  <ImageOff className="w-5 h-5 text-slate-400 stroke-[1.5]" />
+                )}
               </div>
 
-              {/* Product Code / English / Formula */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'ម៉ាក & ម៉ូដែល / Model Code *'
-                    : activeGroup === 'raw_material'
-                    ? 'រូបមន្តគីមី / Chemical Code *'
-                    : activeGroup === 'organic_fertilizer'
-                    ? 'ឈ្មោះកូដ / English Brand *'
-                    : 'ឈ្មោះកូដ / NPK Formula *'}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. Tractor 50HP TH-500 4WD'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. Dolomite CaMg(CO3)2 Tech'
-                      : activeGroup === 'organic_fertilizer'
-                      ? 'ឧ. ECO Super Humic Plus'
-                      : 'ឧ. NPK 27-12-6+TE'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono font-bold outline-none"
-                />
-              </div>
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    disabled={isUploading}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+                  >
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#165b9e]" />
+                        <span>Uploading {uploadProgress}%...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5 text-[#165b9e]" />
+                        <span>Upload image</span>
+                      </>
+                    )}
+                  </button>
 
-              {/* Nickname / Specialization */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'ឈ្មោះហៅក្រៅ / ជំនាញការងារ'
-                    : activeGroup === 'raw_material'
-                    ? 'ឈ្មោះហៅក្រៅ / ការប្រើប្រាស់ចម្បង'
-                    : 'ឈ្មោះហៅក្រៅ / ជំនាញ'}
-                </label>
-                <input
-                  type="text"
-                  value={formData.nicknameKh}
-                  onChange={(e) => setFormData({ ...formData, nicknameKh: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. ស្តេចភ្ជួររាស់ កម្លាំងខ្លាំង សន្សំប្រេង'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. មេកែដីជូរ និងផ្សំជីកម្រិតខ្ពស់'
-                      : activeGroup === 'organic_fertilizer'
-                      ? 'ឧ. ជំនាញបំប៉នដី និងពន្លឿនឫស'
-                      : 'ឧ. ជីគូ ១, ជីជំនាញស្រូវ, ជីទ្រាប់បាត'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-medium outline-none"
-                />
-              </div>
-
-              {/* Sub-Category Selection */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700">
-                    ប្រភេទរង (Sub-Category) *
-                  </label>
-                  {onQuickAddCategory && (
+                  {isValidProductImageUrl(imageUrl) && (
                     <button
                       type="button"
-                      onClick={() => setIsAddingNewCatModal(true)}
-                      className="text-[11px] font-bold text-[#1E5FA8] hover:text-blue-700 flex items-center gap-1 hover:underline cursor-pointer"
+                      onClick={() => setImageUrl('')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ បង្កើតប្រភេទថ្មី</span>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Remove</span>
                     </button>
                   )}
                 </div>
-                <select
-                  value={formData.category}
-                  onChange={(e) => handleCategoryChange(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-bold outline-none cursor-pointer"
-                >
-                  {categories
-                    .filter((cat) => !formData.groupId || cat.groupId === formData.groupId || !cat.groupId)
-                    .map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.nameKh} {cat.groupKh ? `(${cat.groupKh})` : ''}
-                      </option>
-                    ))}
-                </select>
-              </div>
 
-              {/* Specific Header Tag / Formula Display */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'កម្លាំងម៉ាស៊ីន / លក្ខណៈសំគាល់ (e.g. 50 HP / 4WD) *'
-                    : activeGroup === 'raw_material'
-                    ? 'កម្រិតកំហាប់ / ស្តង់ដារ (e.g. 98.5% Pure / CaCO3) *'
-                    : activeGroup === 'organic_fertilizer'
-                    ? 'រូបមន្ត / កម្រិត OM (e.g. OM 45% + Humic) *'
-                    : 'រូបមន្ត NPK (e.g. 27-12-6+TE) *'}
-                </label>
                 <input
                   type="text"
-                  required
-                  value={formData.npk}
-                  onChange={(e) => setFormData({ ...formData, npk: e.target.value })}
+                  value={imageUrl.startsWith('data:image') ? '' : imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
                   placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. 50 HP / 4WD'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. 98.5% Pure / Dolomite'
-                      : activeGroup === 'organic_fertilizer'
-                      ? 'ឧ. OM 45% + Humic 15%'
-                      : 'ឧ. 27-12-6+TE'
+                    imageUrl.startsWith('data:image')
+                      ? 'Uploaded image ready ✓ (or paste image URL here)'
+                      : 'Or paste image URL (https://...)'
                   }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono font-bold outline-none"
+                  className="w-full px-2.5 py-1 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-700 placeholder:text-slate-400 outline-none"
                 />
-              </div>
 
-              {/* Price */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'តម្លៃលក់ ($ USD / គ្រឿង ឬ ឈុត) *'
-                    : activeGroup === 'raw_material'
-                    ? 'តម្លៃលក់ ($ USD / Jumbo Bag ឬ តោន) *'
-                    : 'តម្លៃលក់គោល ($ USD / បាវ ឬ ដប) *'}
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={formData.price}
-                  onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
-                  placeholder="0.00"
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono font-bold text-blue-700 outline-none"
-                />
-              </div>
-
-              {/* Packaging Size */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'ខ្នាតវេចខ្ចប់ / ឈុត (Packaging)'
-                    : activeGroup === 'raw_material'
-                    ? 'ខ្នាតវេចខ្ចប់ (Packaging / Bag)'
-                    : 'ខ្នាតវេចខ្ចប់គោល (Default Packaging)'}
-                </label>
-                <input
-                  type="text"
-                  value={formData.packagingSize}
-                  onChange={(e) => setFormData({ ...formData, packagingSize: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. ១ គ្រឿង (Set ពេញលេញ)'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. Big Bag 1,000kg (Jumbo) ឬ បាវ 50kg'
-                      : 'ឧ. បាវ ៥០ គីឡូក្រាម'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 outline-none"
-                />
-              </div>
-
-              {/* Weight */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery' ? 'ទម្ងន់ម៉ាស៊ីន (Weight)' : 'ទម្ងន់សុទ្ធ (Net Weight)'}
-                </label>
-                <input
-                  type="text"
-                  value={formData.weight}
-                  onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. 1,950kg'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. 1,000kg ឬ 50kg'
-                      : 'ឧ. 50kg'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono outline-none"
-                />
-              </div>
-
-              {/* Official Registration No / Serial No */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'លេខកូដស៊េរី / ស្តង់ដារ (Serial / ISO)'
-                    : activeGroup === 'raw_material'
-                    ? 'លេខកូដស្តង់ដារវិភាគ (COA Standard)'
-                    : 'លេខបញ្ជីការផ្លូវការ (Registration No)'}
-                </label>
-                <input
-                  type="text"
-                  value={formData.registrationNo}
-                  onChange={(e) => setFormData({ ...formData, registrationNo: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. TH-MECH-50HP-2026'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. COA-TH-DOL-2026'
-                      : 'ឧ. FR02 1584/0525 TZAT-GDA'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono outline-none"
-                />
+                {uploadError && (
+                  <p className="text-[11px] text-amber-600">{uploadError}</p>
+                )}
               </div>
             </div>
           </div>
 
-          {/* 3. STOCK & INVENTORY MANAGEMENT (ការគ្រប់គ្រងស្ដុកទំនិញ) */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4 shadow-xs">
-            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 flex items-center gap-2">
-                <Boxes className="w-4 h-4 text-emerald-600" />
-                <span>ការគ្រប់គ្រងស្ដុកទំនិញ (Stock & Inventory)</span>
-              </h3>
-              <span className="text-[11px] font-bold text-slate-500 font-['Kantumruy_Pro']">
-                កំណត់ស្ថានភាព និងចំនួនទំនិញក្នុងស្តុក
-              </span>
-            </div>
-
-            <div className="space-y-4 font-['Kantumruy_Pro'] text-xs">
-              {/* Stock Status Selector (2 options: មានស្ដុក vs មានស្ដុកនៅក្រៅប្រទេស) */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-2">
-                  ស្ថានភាពស្តុកទំនិញ (Stock Status) *
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Option 1: មានស្ដុក (in_stock) */}
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, stockStatus: 'in_stock', inStock: true })}
-                    className={`flex items-start gap-3 p-3.5 rounded-2xl border-2 transition-all text-left cursor-pointer ${
-                      formData.stockStatus === 'in_stock'
-                        ? 'border-emerald-500 bg-emerald-50/80 text-emerald-950 shadow-xs'
-                        : 'border-slate-200 bg-slate-50 hover:bg-white text-slate-700'
-                    }`}
-                  >
-                    <div
-                      className={`p-2 rounded-xl mt-0.5 ${
-                        formData.stockStatus === 'in_stock'
-                          ? 'bg-emerald-500 text-white'
-                          : 'bg-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <PackageCheck className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold font-['Battambang'] text-sm text-emerald-900">
-                          មានស្ដុក (In Stock)
-                        </span>
-                        {formData.stockStatus === 'in_stock' && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
-                            <Check className="w-3 h-3" /> បានជ្រើស
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                        ទំនិញមានស្រាប់នៅក្នុងឃ្លាំងក្នុងស្រុក អាចដឹកជញ្ជូនជូនអតិថិជនបានភ្លាមៗ
-                      </p>
-                    </div>
-                  </button>
-
-                  {/* Option 2: មានស្ដុកនៅក្រៅប្រទេស (overseas_stock) */}
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, stockStatus: 'overseas_stock', inStock: true })}
-                    className={`flex items-start gap-3 p-3.5 rounded-2xl border-2 transition-all text-left cursor-pointer ${
-                      formData.stockStatus === 'overseas_stock'
-                        ? 'border-blue-500 bg-blue-50/80 text-blue-950 shadow-xs'
-                        : 'border-slate-200 bg-slate-50 hover:bg-white text-slate-700'
-                    }`}
-                  >
-                    <div
-                      className={`p-2 rounded-xl mt-0.5 ${
-                        formData.stockStatus === 'overseas_stock'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <Globe className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold font-['Battambang'] text-sm text-blue-900">
-                          មានស្ដុកនៅក្រៅប្រទេស (Overseas Stock)
-                        </span>
-                        {formData.stockStatus === 'overseas_stock' && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">
-                            <Check className="w-3 h-3" /> បានជ្រើស
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                        ទំនិញមានក្នុងស្តុករោងចក្រដៃគូក្រៅប្រទេស ដឹកជញ្ជូនរហ័ស 3-7 ថ្ងៃតាមការកុម្ម៉ង់
-                      </p>
-                    </div>
-                  </button>
+          {/* ========================================================================= */}
+          {/* 🌟 ROW 6: តារាងលក្ខណៈតាមក្រុមទំនិញ (SPECIFICATION TABLE BY PRODUCT GROUP)   */}
+          {/* ========================================================================= */}
+          <div className="rounded-2xl border border-blue-200 bg-blue-50/30 overflow-hidden">
+            {/* Spec Table Section Header */}
+            <div className="px-4 py-3 bg-gradient-to-r from-[#1E5FA8]/10 to-blue-50 border-b border-blue-200/80 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setShowSpecTableEditor(!showSpecTableEditor)}
+                className="flex items-center gap-2 text-left cursor-pointer"
+              >
+                <div className="w-8 h-8 rounded-lg bg-white border border-blue-200 flex items-center justify-center shadow-2xs">
+                  {getGroupBadgeIcon()}
                 </div>
-              </div>
-
-              {/* Stock Quantity and Unit */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ចំនួនក្នុងស្តុកបច្ចុប្បន្ន (Quantity in Stock) *
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={formData.stockQty ?? 0}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        stockQty: Math.max(0, parseInt(e.target.value, 10) || 0),
-                      })
-                    }
-                    placeholder="ឧ. 100"
-                    className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-mono font-bold text-slate-900 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ខ្នាតរាប់ស្តុក (Stock Unit) *
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={formData.stockUnit || ''}
-                      onChange={(e) => setFormData({ ...formData, stockUnit: e.target.value })}
-                      placeholder="ឧ. បាវ, គ្រឿង, ឈុត, កញ្ចប់, តោន"
-                      className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 font-bold outline-none"
-                    />
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setFormData({ ...formData, stockUnit: e.target.value });
-                        }
-                      }}
-                      className="bg-slate-100 border border-slate-300 rounded-xl px-2 py-2 text-xs font-bold text-slate-700 cursor-pointer"
-                    >
-                      <option value="">ជ្រើសខ្នាត</option>
-                      <option value="បាវ">បាវ (Bags)</option>
-                      <option value="គ្រឿង">គ្រឿង (Units)</option>
-                      <option value="ឈុត">ឈុត (Sets)</option>
-                      <option value="កញ្ចប់">កញ្ចប់ (Packs)</option>
-                      <option value="ដប">ដប (Bottles)</option>
-                      <option value="តោន">តោន (Tons)</option>
-                      <option value="ធុង">ធុង (Buckets)</option>
-                    </select>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs sm:text-sm font-bold text-slate-900 font-['Battambang']">
+                      តារាងលក្ខណៈបច្ចេកទេស (Specification Table)
+                    </span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#1E5FA8] text-white font-['Battambang']">
+                      {currentGroupObj?.nameKh || 'ជីគីមី'}
+                    </span>
                   </div>
+                  <p className="text-[11px] text-slate-500">
+                    ទម្រង់តារាងលក្ខណៈប្តូរដោយស្វ័យប្រវត្តិទៅតាមក្រុមទំនិញ (Group) ដែលបានជ្រើសរើស
+                  </p>
                 </div>
-              </div>
-            </div>
-          </div>
+              </button>
 
-          {/* 4. PACKAGING SIZES & DYNAMIC PRICING (ជម្រើសទំហំវេចខ្ចប់ និងតម្លៃតាមខ្នាត) */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4 shadow-xs font-['Kantumruy_Pro']">
-            <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 flex items-center gap-2">
-                  <PackageCheck className="w-4 h-4 text-blue-600" />
-                  <span>ជម្រើសទំហំវេចខ្ចប់ & តម្លៃតាមខ្នាត (Packaging Sizes & Pricing)</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  អនុញ្ញាតឱ្យអតិថិជនជ្រើសរើសទំហំ (ឧទាហរណ៍៖ 50kg, 25kg, 10kg, 5kg សម្រាប់ជីគីមី)
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={handleGenerateStandardSizes}
-                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-xl text-xs font-bold flex items-center gap-1 border border-blue-200 transition-colors cursor-pointer"
+                  onClick={() => setShowSpecPreview(!showSpecPreview)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors cursor-pointer ${
+                    showSpecPreview
+                      ? 'bg-[#1E5FA8] text-white border-[#1E5FA8]'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                  }`}
                 >
-                  <Zap className="w-3.5 h-3.5 text-blue-600" />
-                  <span>បង្កើតទំហំស្តង់ដារស្វ័យប្រវត្តិ</span>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>{showSpecPreview ? 'កែប្រែតារាង' : 'មើលគំរូតារាង'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddSizeOption}
-                  className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-xl text-xs font-bold flex items-center gap-1 border border-green-200 transition-colors cursor-pointer"
+                  onClick={() => setShowSpecTableEditor(!showSpecTableEditor)}
+                  className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5 text-green-600" />
-                  <span>+ បន្ថែមទំហំ</span>
+                  {showSpecTableEditor ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
                 </button>
               </div>
             </div>
 
-            {formData.availableSizes && formData.availableSizes.length > 0 ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-500 px-3 py-1 bg-slate-50 rounded-lg">
-                  <div className="col-span-2">កូដទំហំ (Size)</div>
-                  <div className="col-span-4">ឈ្មោះខ្នាតភាសាខ្មែរ (Khmer Label)</div>
-                  <div className="col-span-2">តម្លៃរាយ ($ USD)</div>
-                  <div className="col-span-2">តម្លៃបោះដុំ ($ USD)</div>
-                  <div className="col-span-1 text-center">ខ្នាតគោល</div>
-                  <div className="col-span-1 text-right">លុប</div>
-                </div>
-
-                {formData.availableSizes.map((sizeOpt, idx) => (
-                  <div
-                    key={idx}
-                    className={`grid grid-cols-12 gap-2 items-center p-3 rounded-2xl border transition-all ${
-                      sizeOpt.isDefault
-                        ? 'bg-blue-50/50 border-blue-300 ring-1 ring-blue-300'
-                        : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    {/* Size Key */}
-                    <div className="col-span-2">
-                      <input
-                        type="text"
-                        value={sizeOpt.size}
-                        onChange={(e) => handleUpdateSizeOption(idx, 'size', e.target.value)}
-                        placeholder="50kg"
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold outline-none"
-                      />
-                    </div>
-
-                    {/* Label Kh */}
-                    <div className="col-span-4">
-                      <input
-                        type="text"
-                        value={sizeOpt.labelKh}
-                        onChange={(e) => handleUpdateSizeOption(idx, 'labelKh', e.target.value)}
-                        placeholder="បាវ ៥០ គីឡូក្រាម"
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-medium outline-none"
-                      />
-                    </div>
-
-                    {/* Price */}
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={sizeOpt.price}
-                        onChange={(e) =>
-                          handleUpdateSizeOption(idx, 'price', parseFloat(e.target.value) || 0)
-                        }
-                        placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-blue-700 outline-none"
-                      />
-                    </div>
-
-                    {/* Wholesale Price */}
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={sizeOpt.wholesalePrice ?? (sizeOpt.price * 0.92)}
-                        onChange={(e) =>
-                          handleUpdateSizeOption(idx, 'wholesalePrice', parseFloat(e.target.value) || 0)
-                        }
-                        placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-emerald-700 outline-none"
-                      />
-                    </div>
-
-                    {/* Default Radio */}
-                    <div className="col-span-1 flex justify-center">
-                      <input
-                        type="radio"
-                        name="defaultSizeOption"
-                        checked={Boolean(sizeOpt.isDefault)}
-                        onChange={() => {
-                          handleUpdateSizeOption(idx, 'isDefault', true);
-                          // Sync main price & packaging size
-                          setFormData((prev) => ({
-                            ...prev,
-                            price: sizeOpt.price,
-                            packagingSize: sizeOpt.labelKh,
-                            weight: sizeOpt.weight || sizeOpt.size,
-                          }));
-                        }}
-                        title="កំណត់ជាខ្នាតគោល"
-                        className="w-4 h-4 text-blue-600 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Delete */}
-                    <div className="col-span-1 flex justify-end">
+            {showSpecTableEditor && (
+              <div className="p-4 space-y-4">
+                {showSpecPreview ? (
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-slate-600 flex items-center justify-between">
+                      <span>គំរូតារាងលក្ខណៈដែលនឹងបង្ហាញលើទំព័រលម្អិតទំនិញ៖</span>
                       <button
                         type="button"
-                        onClick={() => handleRemoveSizeOption(idx)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        onClick={() => setShowSpecPreview(false)}
+                        className="text-[#1E5FA8] underline cursor-pointer"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        ត្រឡប់ទៅកែប្រែទិន្នន័យ
                       </button>
                     </div>
+                    <ProductSpecTable product={previewProduct} />
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
-                <p className="text-xs text-slate-500 mb-2">មិនទាន់មានជម្រើសទំហំវេចខ្ចប់នៅឡើយទេ</p>
-                <button
-                  type="button"
-                  onClick={handleGenerateStandardSizes}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>បង្កើតទំហំស្តង់ដារ 50kg, 25kg, 10kg, 5kg</span>
-                </button>
+                ) : (
+                  <>
+                    {/* GROUP 1: MACHINERY (គ្រឿងចក្រកសិកម្ម) */}
+                    {groupId === 'machinery' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ម៉ាក & ម៉ូដែល (Brand & Model)
+                          </label>
+                          <input
+                            type="text"
+                            value={machBrandModel}
+                            onChange={(e) => setMachBrandModel(e.target.value)}
+                            placeholder="ឧ. Kubota L5018 / TH-500"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            កម្លាំងម៉ាស៊ីន (Horsepower HP)
+                          </label>
+                          <input
+                            type="text"
+                            value={machHorsepower}
+                            onChange={(e) => {
+                              setMachHorsepower(e.target.value);
+                              setNpk(e.target.value);
+                            }}
+                            placeholder="ឧ. 50 HP / 4WD"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ប្រភេទម៉ាស៊ីន (Engine Type)
+                          </label>
+                          <input
+                            type="text"
+                            value={machEngineType}
+                            onChange={(e) => setMachEngineType(e.target.value)}
+                            placeholder="ឧ. Diesel 4 ស៊ីឡាំង Direct Injection"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ប្រព័ន្ធបញ្ជា & បង្វិលកង់ (Transmission / Drive)
+                          </label>
+                          <input
+                            type="text"
+                            value={machDriveSystem}
+                            onChange={(e) => setMachDriveSystem(e.target.value)}
+                            placeholder="ឧ. Synchro-Shuttle 8F x 8R / 4WD"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            កម្រិតស៊ីប្រេង (Fuel Consumption)
+                          </label>
+                          <input
+                            type="text"
+                            value={machFuelConsumption}
+                            onChange={(e) => setMachFuelConsumption(e.target.value)}
+                            placeholder="ឧ. 3.5 - 4.8 L/ម៉ោង"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ទម្ងន់ & វិមាត្រ (Weight & Dimensions)
+                          </label>
+                          <input
+                            type="text"
+                            value={machDimensions}
+                            onChange={(e) => setMachDimensions(e.target.value)}
+                            placeholder="ឧ. 1,850 kg"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ការធានា & សេវាកម្ម (Warranty)
+                          </label>
+                          <input
+                            type="text"
+                            value={machWarranty}
+                            onChange={(e) => setMachWarranty(e.target.value)}
+                            placeholder="ឧ. ធានា ១ ឆ្នាំ គ្រឿងបន្លាស់គ្រប់គ្រាន់"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ស្ថានភាពទំនិញ (Condition)
+                          </label>
+                          <input
+                            type="text"
+                            value={machCondition}
+                            onChange={(e) => setMachCondition(e.target.value)}
+                            placeholder="ឧ. ទំនិញថ្មី ១០០% (New Factory)"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            សមត្ថភាពការងារ & អត្ថប្រយោជន៍ (Working Capacity / Usage)
+                          </label>
+                          <input
+                            type="text"
+                            value={machWorkingCapacity}
+                            onChange={(e) => {
+                              setMachWorkingCapacity(e.target.value);
+                              setUsage(e.target.value);
+                            }}
+                            placeholder="ឧ. ភ្ជួរដី ជ្រោយដី និងដឹកជញ្ជូនកសិផលគ្រប់ស្ថានភាពដី (1.5-2.0 ហិកតា/ថ្ងៃ)"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GROUP 2: CHEMICAL FERTILIZER (ជីគីមី) */}
+                    {groupId === 'chemical_fertilizer' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            រូបមន្ត NPK (NPK Formula)
+                          </label>
+                          <input
+                            type="text"
+                            value={npk}
+                            onChange={(e) => setNpk(e.target.value)}
+                            placeholder="ឧ. 16-16-8+TE ឬ 46-0-0"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            លេខបញ្ជីការផ្លូវការ (MAFF Reg. No)
+                          </label>
+                          <input
+                            type="text"
+                            value={registrationNo}
+                            onChange={(e) => setRegistrationNo(e.target.value)}
+                            placeholder="ឧ. FR02 1584/0525 TZAT-GDA"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none font-mono"
+                          />
+                        </div>
+
+                        {/* Nutrients N-P-K-TE */}
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            សមាសធាតុចិញ្ចឹម (Nutrients %: N, P2O5, K2O, TE)
+                          </label>
+                          <div className="grid grid-cols-4 gap-2">
+                            <input
+                              type="text"
+                              value={chemNutrientN}
+                              onChange={(e) => setChemNutrientN(e.target.value)}
+                              placeholder="N % (ឧ. 16)"
+                              className="px-2.5 py-1.5 bg-blue-50/50 border border-blue-200 rounded-lg text-xs text-slate-900 outline-none font-mono"
+                            />
+                            <input
+                              type="text"
+                              value={chemNutrientP}
+                              onChange={(e) => setChemNutrientP(e.target.value)}
+                              placeholder="P2O5 % (ឧ. 16)"
+                              className="px-2.5 py-1.5 bg-amber-50/50 border border-amber-200 rounded-lg text-xs text-slate-900 outline-none font-mono"
+                            />
+                            <input
+                              type="text"
+                              value={chemNutrientK}
+                              onChange={(e) => setChemNutrientK(e.target.value)}
+                              placeholder="K2O % (ឧ. 8)"
+                              className="px-2.5 py-1.5 bg-rose-50/50 border border-rose-200 rounded-lg text-xs text-slate-900 outline-none font-mono"
+                            />
+                            <input
+                              type="text"
+                              value={chemNutrientTE}
+                              onChange={(e) => setChemNutrientTE(e.target.value)}
+                              placeholder="TE / S / MgO"
+                              className="px-2.5 py-1.5 bg-emerald-50/50 border border-emerald-200 rounded-lg text-xs text-slate-900 outline-none font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ពណ៌គ្រាប់ជី & ទម្រង់ (Granule Color & Form)
+                          </label>
+                          <input
+                            type="text"
+                            value={chemGranuleShape}
+                            onChange={(e) => setChemGranuleShape(e.target.value)}
+                            placeholder="ឧ. គ្រាប់ចម្រុះគុណភាពខ្ពស់ រលាយសព្វល្អ"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            កម្រិតប្រើប្រាស់ណែនាំ (Application Rate)
+                          </label>
+                          <input
+                            type="text"
+                            value={chemAppRate}
+                            onChange={(e) => setChemAppRate(e.target.value)}
+                            placeholder="ឧ. 150 - 250 គីឡូក្រាម / ហិកតា"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ដំណាំស័ក្តិសម (Suitable Crops - បំបែកដោយសញ្ញាក្បៀស ,)
+                          </label>
+                          <input
+                            type="text"
+                            value={suitableCropsStr}
+                            onChange={(e) => setSuitableCropsStr(e.target.value)}
+                            placeholder="ឧ. ស្រូវ, ដំណាំហូបផ្លែ, បន្លែគ្រប់ប្រភេទ, ពោត, ដំឡូងមី"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            អត្ថប្រយោជន៍ចម្បង (Main Benefits & Usage)
+                          </label>
+                          <input
+                            type="text"
+                            value={usage}
+                            onChange={(e) => setUsage(e.target.value)}
+                            placeholder="ឧ. ជួយបែកគុម្ពស្រូវ ដើមរឹងមាំ ស្លឹកបៃតងក្រាស់ និងបង្កើនទិន្នផលខ្ពស់"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GROUP 3 & 4: ORGANIC & COMPOST FERTILIZER (ជីសរីរាង្គ & ជីកំប៉ុស) */}
+                    {(groupId === 'organic_fertilizer' || groupId === 'compost_fertilizer') && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            សារធាតុសរីរាង្គ (Organic Matter OM %)
+                          </label>
+                          <input
+                            type="text"
+                            value={orgMatter}
+                            onChange={(e) => {
+                              setOrgMatter(e.target.value);
+                              setNpk(e.target.value);
+                            }}
+                            placeholder="ឧ. ≥ 45% (High OM)"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            អាស៊ីត Humic & Fulvic
+                          </label>
+                          <input
+                            type="text"
+                            value={orgHumicFulvic}
+                            onChange={(e) => setOrgHumicFulvic(e.target.value)}
+                            placeholder="ឧ. 15% Humic + 3% Fulvic Acid"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            មីក្រូសារពាង្គកាយមានប្រយោជន៍ (Microbes / EM)
+                          </label>
+                          <input
+                            type="text"
+                            value={orgMicrobes}
+                            onChange={(e) => setOrgMicrobes(e.target.value)}
+                            placeholder="ឧ. Trichoderma & Bacillus (1x10^8 CFU/g)"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            កម្រិត pH ដី & សំណើម (pH & Moisture)
+                          </label>
+                          <input
+                            type="text"
+                            value={orgPhMoisture}
+                            onChange={(e) => setOrgPhMoisture(e.target.value)}
+                            placeholder="ឧ. pH 6.5 - 7.5 (សំណើម ≤ 20%)"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ទម្រង់រូបវន្ត (Physical Form)
+                          </label>
+                          <input
+                            type="text"
+                            value={orgPhysicalForm}
+                            onChange={(e) => setOrgPhysicalForm(e.target.value)}
+                            placeholder="ឧ. គ្រាប់មូល Pellet (3-4mm) ឬ ម្សៅកំប៉ុសម៉ត់"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            វិញ្ញាបនបត្រស្តង់ដារ (Certification)
+                          </label>
+                          <input
+                            type="text"
+                            value={orgCertification}
+                            onChange={(e) => setOrgCertification(e.target.value)}
+                            placeholder="ឧ. Organic Standard GAP / ISO"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            អត្ថប្រយោជន៍ចម្បង (Main Benefits & Usage)
+                          </label>
+                          <input
+                            type="text"
+                            value={usage}
+                            onChange={(e) => setUsage(e.target.value)}
+                            placeholder="ឧ. កែលម្អដីខូច ធ្វើឱ្យដីផុសល្អ បង្កើនឫសថ្មី និងរក្សាសំណើមដីបានយូរ"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* GROUP 5, 6, 7: SOIL RAW MATERIAL, FEED RAW MATERIAL, MUSHROOM NUTRIENT */}
+                    {(groupId === 'soil_raw_material' ||
+                      groupId === 'feed_raw_material' ||
+                      groupId === 'mushroom_nutrient' ||
+                      groupId === 'raw_material') && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-slate-200">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            {groupId === 'feed_raw_material'
+                              ? 'កម្រិតប្រូតេអ៊ីន / គុណភាព (Protein / Grade %)'
+                              : groupId === 'mushroom_nutrient'
+                              ? 'កម្រិតសារធាតុបំប៉ន / ភាពសុទ្ធ (Grade %)'
+                              : 'កម្រិតភាពបរិសុទ្ធ (Purity % / Grade)'}
+                          </label>
+                          <input
+                            type="text"
+                            value={rawPurity}
+                            onChange={(e) => {
+                              setRawPurity(e.target.value);
+                              setNpk(e.target.value);
+                            }}
+                            placeholder={
+                              groupId === 'feed_raw_material'
+                                ? 'ឧ. Protein 46-48% Feed Grade'
+                                : 'ឧ. 98.5% Pure Grade'
+                            }
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            រូបមន្ត / សមាសធាតុចម្បង (Formula / Main Nutrient)
+                          </label>
+                          <input
+                            type="text"
+                            value={rawFormula}
+                            onChange={(e) => setRawFormula(e.target.value)}
+                            placeholder="ឧ. CaMg(CO3)2 ឬ Amino + Vitamin B"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ទំហំគ្រាប់ / កម្រិតម៉ដ្ឋ (Mesh Size / Form)
+                          </label>
+                          <input
+                            type="text"
+                            value={rawParticleSize}
+                            onChange={(e) => setRawParticleSize(e.target.value)}
+                            placeholder="ឧ. 100 - 200 Mesh Powder / គ្រាប់ម៉ត់"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            កម្រិតរលាយ & pH / សំណើម (Solubility & pH)
+                          </label>
+                          <input
+                            type="text"
+                            value={rawSolubility}
+                            onChange={(e) => setRawSolubility(e.target.value)}
+                            placeholder="ឧ. រលាយក្នុងទឹក / pH 7.5 - 8.5 / សំណើម ≤ 12%"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ស្តង់ដារវិញ្ញាបនបត្រគុណភាព (COA Standard)
+                          </label>
+                          <input
+                            type="text"
+                            value={rawStandardGrade}
+                            onChange={(e) => setRawStandardGrade(e.target.value)}
+                            placeholder="ឧ. COA Inspection Standard Passed"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            ប្រភពនាំចូល / ផលិតកម្ម (Origin)
+                          </label>
+                          <input
+                            type="text"
+                            value={rawOrigin}
+                            onChange={(e) => setRawOrigin(e.target.value)}
+                            placeholder="ឧ. នាំចូលផ្ទាល់ពីរោងចក្រស្តង់ដារអន្តរជាតិ"
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            អត្ថប្រយោជន៍ចម្បង & របៀបប្រើប្រាស់ (Usage)
+                          </label>
+                          <input
+                            type="text"
+                            value={usage}
+                            onChange={(e) => setUsage(e.target.value)}
+                            placeholder="ពិពណ៌នាខ្លីអំពីការប្រើប្រាស់ និងអត្ថប្រយោជន៍..."
+                            className="w-full px-3 py-2 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Optional Extra Custom Rows for តារាងលក្ខណៈ */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                          <TableProperties className="w-3.5 h-3.5 text-[#1E5FA8]" />
+                          <span>ជួរលក្ខណៈបន្ថែមក្នុងតារាង (Custom Spec Rows - Optional)</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomSpecRow}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-blue-50 text-[#1E5FA8] border border-blue-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>បន្ថែមជួរថ្មី</span>
+                        </button>
+                      </div>
+
+                      {customSpecs.length > 0 && (
+                        <div className="space-y-2">
+                          {customSpecs.map((row, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={row.labelKh}
+                                onChange={(e) =>
+                                  handleUpdateCustomSpecRow(idx, 'labelKh', e.target.value)
+                                }
+                                placeholder="ចំណងជើងជួរ (ឧ. ប្រទេសផលិត)"
+                                className="w-2/5 px-3 py-1.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                              />
+                              <input
+                                type="text"
+                                value={row.value}
+                                onChange={(e) =>
+                                  handleUpdateCustomSpecRow(idx, 'value', e.target.value)
+                                }
+                                placeholder="តម្លៃបង្ហាញ (ឧ. បច្ចេកវិទ្យាជប៉ុន)"
+                                className="flex-1 px-3 py-1.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCustomSpecRow(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="លុបជួរនេះ"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Optional Wholesale, Cost Price & Code */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-blue-200/60">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          កូដទំនិញ (Product Code)
+                        </label>
+                        <input
+                          type="text"
+                          value={productCode}
+                          onChange={(e) => setProductCode(e.target.value)}
+                          placeholder="ឧ. 012 ឬ TH-01"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          តម្លៃបោះដុំ (Wholesale $)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={wholesalePriceStr}
+                          onChange={(e) => setWholesalePriceStr(e.target.value)}
+                          placeholder="Optional $"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          ថ្លៃដើម (Cost Price $)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={costPriceStr}
+                          onChange={(e) => setCostPriceStr(e.target.value)}
+                          placeholder="Optional $"
+                          className="w-full px-3 py-1.5 bg-white border border-slate-200 focus:border-[#165b9e] rounded-lg text-xs text-slate-900 outline-none tabular-nums"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
 
-          {/* 5. GROUP-SPECIFIC TECHNICAL SPECIFICATIONS (លក្ខណៈបច្ចេកទេសជាក់លាក់តាមមុខទំនិញ) */}
+          {/* Modal Footer Buttons: Cancel (left) & Save product (right) */}
+          <div className="pt-3 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-5 py-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
 
-          {/* 3A. MACHINERY SPECIFICATIONS */}
-          {activeGroup === 'machinery' && (
-            <div className="bg-amber-50/50 p-6 rounded-3xl border border-amber-200 space-y-4 shadow-xs">
-              <div className="border-b border-amber-200/60 pb-3 flex items-center justify-between">
-                <h3 className="text-sm font-bold font-['Battambang'] text-amber-950 flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-amber-600" />
-                  លក្ខណៈបច្ចេកទេសគ្រឿងយន្តកសិកម្ម (Machinery Specifications)
-                </h3>
-                <span className="text-[11px] bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full font-bold">
-                  គ្រឿងចក្រ
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-['Kantumruy_Pro'] text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    កម្លាំងសេះម៉ាស៊ីន (Horsepower / kW)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.horsepower || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, horsepower: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 50 HP (37.3 kW) @ 2,400 RPM"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ប្រភេទម៉ាស៊ីន (Engine Type / Fuel)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.engineType || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, engineType: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. Diesel 4 ស៊ីឡាំង Direct Injection ត្រជាក់ដោយទឹក"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ប្រព័ន្ធបញ្ជា & ចង្កឹះលេខ (Drive & Transmission)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.driveSystem || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, driveSystem: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. កង់ ៤ (4WD) / Synchro-Shuttle 8F x 8R"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    កម្រិតស៊ីប្រេងជាមធ្យម (Fuel Consumption)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.fuelConsumption || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, fuelConsumption: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 3.5 - 4.8 លីត្រ / ម៉ោង (សន្សំប្រេងខ្ពស់)"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    សមត្ថភាពការងារ (Working Capacity / Speed)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.workingCapacity || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, workingCapacity: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. ទទឹងភ្ជួរ 2.0 ម៉ែត្រ / 1.5-2.0 ហិកតា/ថ្ងៃ"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ការធានា & សេវាកម្ម (Warranty & Maintenance)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.warranty || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, warranty: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. ធានា ១២ ខែ ឬ ១,២០០ ម៉ោង មានគ្រឿងបន្លាស់សុទ្ធ"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ស្ថានភាពទំនិញ (Condition)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.condition || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, condition: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. ទំនិញថ្មី ១០០% (New Factory Imported)"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    វិមាត្រ & ទំហំ (Dimensions L x W x H)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.machinerySpecs?.dimensions || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        machinerySpecs: { ...formData.machinerySpecs, dimensions: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 3,250 x 1,495 x 2,050 មម (1,950 kg)"
-                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 3B. ORGANIC FERTILIZER SPECIFICATIONS */}
-          {activeGroup === 'organic_fertilizer' && (
-            <div className="bg-emerald-50/50 p-6 rounded-3xl border border-emerald-200 space-y-4 shadow-xs">
-              <div className="border-b border-emerald-200/60 pb-3 flex items-center justify-between">
-                <h3 className="text-sm font-bold font-['Battambang'] text-emerald-950 flex items-center gap-2">
-                  <Sprout className="w-4 h-4 text-emerald-600" />
-                  លក្ខណៈបច្ចេកទេសជីសរីរាង្គ (Organic Fertilizer Specifications)
-                </h3>
-                <span className="text-[11px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
-                  ជីសរីរាង្គ
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-['Kantumruy_Pro'] text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    សារធាតុសរីរាង្គ (Organic Matter OM %)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.organicMatter || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, organicMatter: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. ≥ 45% (កម្រិតសរីរាង្គខ្ពស់)"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    អាស៊ីត Humic & Fulvic Acid %
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.humicFulvic || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, humicFulvic: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 15% Humic + 3% Fulvic Acid"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    មីក្រូសារពាង្គកាយមានប្រយោជន៍ (Microbes CFU/g)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.microorganisms || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, microorganisms: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. Trichoderma & Bacillus 1x10^8 CFU/g"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    កម្រិត pH ដី & សំណើម (pH & Moisture)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.phAndMoisture || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, phAndMoisture: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. pH 6.5 - 7.5, សំណើម ≤ 20%"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ទម្រង់រូបវន្តជី (Physical Appearance / Form)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.physicalForm || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, physicalForm: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. គ្រាប់មូល Pellet 3-4mm ឬ រាវ Liquid"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    វិញ្ញាបនបត្រស្តង់ដារសរីរាង្គ (Standard Certification)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.organicSpecs?.certification || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        organicSpecs: { ...formData.organicSpecs, certification: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. Organic Standard CAM-GAP / IFOAM"
-                    className="w-full bg-white border border-emerald-300 focus:border-emerald-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 3C. RAW MATERIAL SPECIFICATIONS */}
-          {activeGroup === 'raw_material' && (
-            <div className="bg-purple-50/50 p-6 rounded-3xl border border-purple-200 space-y-4 shadow-xs">
-              <div className="border-b border-purple-200/60 pb-3 flex items-center justify-between">
-                <h3 className="text-sm font-bold font-['Battambang'] text-purple-950 flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-purple-600" />
-                  លក្ខណៈបច្ចេកទេសវត្ថុធាតុដើម & សារធាតុរ៉ែ (Raw Material Specifications)
-                </h3>
-                <span className="text-[11px] bg-purple-200 text-purple-900 px-2 py-0.5 rounded-full font-bold">
-                  វត្ថុធាតុដើម
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-['Kantumruy_Pro'] text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    កម្រិតភាពបរិសុទ្ធ (Purity % / Grade)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.purity || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, purity: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 98.5% Pure Technical Grade"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    រូបមន្តគីមី / CAS No (Chemical Formula)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.chemicalFormula || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, chemicalFormula: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. CaCO3·MgCO3 / CAS 16389-88-1"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 font-mono outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ទំហំគ្រាប់ / កម្រិតម៉ដ្ឋ (Mesh Size / Particle Size)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.particleSize || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, particleSize: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 100 - 200 Mesh Powder ឬ 2-4mm Granule"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    កម្រិតរលាយ & pH (Solubility & pH)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.solubility || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, solubility: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. រលាយក្នុងទឹក / pH 8.0 - 8.5"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ស្តង់ដារវិញ្ញាបនបត្រគុណភាព (COA Standard)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.standardGrade || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, standardGrade: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. COA Inspection Standard Passed"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">
-                    ប្រភពនាំចូល (Country of Origin)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.rawMaterialSpecs?.origin || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        rawMaterialSpecs: { ...formData.rawMaterialSpecs, origin: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. នាំចូលផ្ទាល់ពីរោងចក្រស្តង់ដារអន្តរជាតិ"
-                    className="w-full bg-white border border-purple-300 focus:border-purple-500 rounded-xl px-3.5 py-2 outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 3D. CHEMICAL FERTILIZER NUTRIENTS (NPK & Micro-nutrients) */}
-          {activeGroup === 'chemical_fertilizer' && (
-            <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-200 space-y-4 shadow-xs">
-              <div className="border-b border-blue-200/60 pb-3 flex items-center justify-between">
-                <h3 className="text-sm font-bold font-['Battambang'] text-blue-950 flex items-center gap-2">
-                  <FlaskConical className="w-4 h-4 text-blue-600" />
-                  សមាសធាតុចិញ្ចឹម & រូបមន្ត NPK (Chemical Nutrient Composition)
-                </h3>
-                <span className="text-[11px] bg-blue-200 text-blue-900 px-2 py-0.5 rounded-full font-bold">
-                  ជីគីមី NPK
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 font-['Kantumruy_Pro'] text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">អាសូត N (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.n || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, n: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 27%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">ផូស្វ័រ P₂O₅ (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.p || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, p: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 12%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">ប៉ូតាស្យូម K₂O (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.k || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, k: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 6%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono font-bold outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">ស័ង្កសី Zn (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.zn || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, zn: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 0.5%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">ម៉ាញ៉េស្យូម MgO (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.mg || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, mg: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 1.0%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">កាល់ស្យូម CaO (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.ca || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, ca: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 2.0%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">ស្ពាន់ធ័រ S (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.s || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, s: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 4.0%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Fulvic Acid (%)</label>
-                  <input
-                    type="text"
-                    value={formData.nutrients?.fulvicAcid || ''}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        nutrients: { ...formData.nutrients, fulvicAcid: e.target.value },
-                      })
-                    }
-                    placeholder="ឧ. 3.0%"
-                    className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 font-mono outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 4. USAGE & DETAILED INSTRUCTIONS */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4 shadow-xs">
-            <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 border-b border-slate-100 pb-3 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-500" />
-              {activeGroup === 'machinery'
-                ? 'របៀបប្រើប្រាស់ & ការណែនាំបច្ចេកទេស'
-                : 'ការណែនាំអំពីការប្រើប្រាស់ និងអត្ថប្រយោជន៍'}
-            </h3>
-
-            <div className="space-y-4 font-['Kantumruy_Pro'] text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'មុខងារការងារចម្បង (Summary Usage)'
-                    : 'របៀបប្រើប្រាស់សង្ខេប (Summary Usage)'}
-                </label>
-                <input
-                  type="text"
-                  value={formData.usage}
-                  onChange={(e) => setFormData({ ...formData, usage: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. ភ្ជួរដី ជ្រោយដី និងដឹកជញ្ជូនកសិផលគ្រប់ស្ថានភាពដី'
-                      : activeGroup === 'raw_material'
-                      ? 'ឧ. បាចកែដីជូរ ឬប្រើសម្រាប់លាយរូបមន្តជីកសិកម្ម'
-                      : 'ឧ. ប្រើសម្រាប់បាចទ្រាប់បាត ឬបំប៉នដើម និងស្លឹក'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-2 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery'
-                    ? 'ការពិពណ៌នាលម្អិតអំពីគ្រឿងចក្រ (Detailed Description)'
-                    : 'របៀបប្រើប្រាស់លម្អិត & កម្រិតប្រើប្រាស់ (Detailed Usage)'}
-                </label>
-                <textarea
-                  rows={3}
-                  value={formData.detailedUsage}
-                  onChange={(e) => setFormData({ ...formData, detailedUsage: e.target.value })}
-                  placeholder={
-                    activeGroup === 'machinery'
-                      ? 'ឧ. ត្រាក់ទ័រម៉ាស៊ីនម៉ាស៊ូត ៤ ស៊ីឡាំង កម្លាំង 50 សេះ កង់ ៤ ជំនាន់ថ្មី ស័ក្តិសមបំផុតសម្រាប់ភ្ជួរដីស្រែ ដីចម្ការដំឡូងមី ពោត និងចម្ការទុរេន ធន់រឹងមាំ សន្សំសំចៃប្រេងខ្ពស់។'
-                      : 'ឧ. ប្រើប្រាស់កម្រិត ១៥០-២៥០ គីឡូក្រាមក្នុងមួយហិកតា ក្នុងដំណាក់កាលលូតលាស់ដំបូង...'
-                  }
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl p-3 outline-none"
-                />
-              </div>
-
-              {/* Key Benefits Tags */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery' ? 'អត្ថប្រយោជន៍ និងលក្ខណៈពិសេសចម្បង' : 'អត្ថប្រយោជន៍ចម្បង (Key Benefits)'}
-                </label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={benefitInput}
-                    onChange={(e) => setBenefitInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddBenefit())}
-                    placeholder="បញ្ចូលអត្ថប្រយោជន៍ រួចចុច Enter ឬ ចុចប៊ូតុងបន្ថែម"
-                    className="flex-1 bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-1.5 outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddBenefit}
-                    className="px-4 py-1.5 bg-[#1E5FA8] hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer transition-colors"
-                  >
-                    + បន្ថែម
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {formData.benefits?.map((b, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-800 rounded-lg text-xs font-medium border border-blue-200"
-                    >
-                      {b}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveBenefit(idx)}
-                        className="text-blue-500 hover:text-red-600 font-bold ml-1"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Suitable Crops / Applications */}
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">
-                  {activeGroup === 'machinery' ? 'ប្រភេទដី & ការងារសមស្រប' : 'ដំណាំសមស្រប (Suitable Crops)'}
-                </label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={cropInput}
-                    onChange={(e) => setCropInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddCrop())}
-                    placeholder={
-                      activeGroup === 'machinery'
-                        ? 'ឧ. ដីស្រែ, ដីចម្ការដំឡូងមី, ចម្ការទុរេន, ដឹកជញ្ជូន...'
-                        : 'ឧ. ស្រូវ, ទុរេន, ស្វាយ, ដំឡូងមី, ពោត...'
-                    }
-                    className="flex-1 bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3.5 py-1.5 outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddCrop}
-                    className="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold cursor-pointer transition-colors"
-                  >
-                    + បន្ថែម
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {formData.suitableCrops?.map((c, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-800 rounded-lg text-xs font-medium border border-emerald-200"
-                    >
-                      {c}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCrop(idx)}
-                        className="text-emerald-500 hover:text-red-600 font-bold ml-1"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <button
+              type="submit"
+              disabled={isUploading}
+              className="px-6 py-2.5 bg-[#165b9e] hover:bg-[#124b82] text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              Save product
+            </button>
           </div>
-        </div>
-
-        {/* Right Column - Visual Styles & Image Upload (4 cols) */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* Visual Appearance & Image Upload */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-4 shadow-xs font-['Kantumruy_Pro']">
-            <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 border-b border-slate-100 pb-3 flex items-center justify-between">
-              <span>រូបភាព & គំរូទំនិញ</span>
-              <span className="text-[10px] text-blue-600 font-bold">Live Preview</span>
-            </h3>
-
-            {/* Image Uploader & Presets */}
-            <ImageUploader
-              currentImageUrl={formData.imageUrl || ''}
-              onImageSelected={(url) => setFormData({ ...formData, imageUrl: url })}
-            />
-
-            {/* Live Visual Illustration Preview */}
-            <div className="pt-4 border-t border-slate-100 flex flex-col items-center">
-              <span className="text-[11px] font-bold text-slate-500 mb-2">
-                ទិដ្ឋភាពបង្ហាញជាក់ស្តែងលើវេបសាយ:
-              </span>
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 w-full flex items-center justify-center">
-                <ProductBagIllustration
-                  product={formData as Product}
-                  size="md"
-                  showGranulesBadge={false}
-                  className="w-40 h-40 rounded-xl"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Badges & Status Switches */}
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 space-y-3 shadow-xs text-xs font-['Kantumruy_Pro']">
-            <h3 className="text-sm font-bold font-['Battambang'] text-slate-900 border-b border-slate-100 pb-2">
-              ស្ថានភាព និងផ្លាកសញ្ញា
-            </h3>
-
-            <label className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-slate-100 cursor-pointer">
-              <span className="font-bold text-slate-700">★ ដាក់ផ្លាកពេញនិយម (Popular)</span>
-              <input
-                type="checkbox"
-                checked={formData.isPopular}
-                onChange={(e) => setFormData({ ...formData, isPopular: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded"
-              />
-            </label>
-
-            <label className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-slate-100 cursor-pointer">
-              <span className="font-bold text-slate-700">✨ ដាក់ផ្លាកទំនិញថ្មី (New Arrival)</span>
-              <input
-                type="checkbox"
-                checked={formData.isNew}
-                onChange={(e) => setFormData({ ...formData, isNew: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded"
-              />
-            </label>
-
-            <label className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-slate-100 cursor-pointer">
-              <span className="font-bold text-slate-700">✓ មានទំនិញក្នុងស្តុក (In Stock)</span>
-              <input
-                type="checkbox"
-                checked={formData.inStock}
-                onChange={(e) => setFormData({ ...formData, inStock: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded"
-              />
-            </label>
-          </div>
-        </div>
-      </form>
-
-      {/* Quick Add Category Modal */}
-      {isAddingNewCatModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-5 animate-in fade-in zoom-in duration-150 font-['Kantumruy_Pro']">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-              <h4 className="text-sm font-bold font-['Battambang'] text-slate-900 flex items-center gap-2">
-                <Plus className="w-4 h-4 text-[#1E5FA8]" />
-                បង្កើតប្រភេទថ្មី (Category)
-              </h4>
-              <button
-                type="button"
-                onClick={() => setIsAddingNewCatModal(false)}
-                className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ស្ថិតក្នុងមុខទំនិញ (Main Group) *
-                </label>
-                <select
-                  value={formData.groupId || 'chemical_fertilizer'}
-                  onChange={(e) => {
-                    const nextG = e.target.value as ProductGroupId;
-                    const gObj = PRODUCT_GROUPS.find((g) => g.id === nextG);
-                    setFormData((prev) => ({
-                      ...prev,
-                      groupId: nextG,
-                      groupKh: gObj?.nameKh || 'ជីគីមី',
-                    }));
-                  }}
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-bold outline-none cursor-pointer"
-                >
-                  {PRODUCT_GROUPS.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.nameKh} ({g.name})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ឈ្មោះប្រភេទ (ខ្មែរ) *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newCatKh}
-                  onChange={(e) => setNewCatKh(e.target.value)}
-                  placeholder="ឧ. ត្រាក់ទ័រ & គោយន្ត, ជីគីមី NPK, ជីបំប៉នផ្កាផ្លែ..."
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-bold outline-none"
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ឈ្មោះកូដ / English Slug (ជម្រើស)
-                </label>
-                <input
-                  type="text"
-                  value={newCatEn}
-                  onChange={(e) => setNewCatEn(e.target.value)}
-                  placeholder="ឧ. Tractor, Foliar, Booster, Bio..."
-                  className="w-full bg-slate-50 border border-slate-300 focus:bg-white focus:border-blue-500 rounded-xl px-3 py-2 text-xs font-mono outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-4 mt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setIsAddingNewCatModal(false)}
-                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
-              >
-                បោះបង់
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!newCatKh.trim()) {
-                    alert('សូមបញ្ចូលឈ្មោះប្រភេទ');
-                    return;
-                  }
-                  const activeGroupId = formData.groupId || 'chemical_fertilizer';
-                  const activeGroupObj = PRODUCT_GROUPS.find((g) => g.id === activeGroupId);
-                  const newId = newCatEn.trim().replace(/\s+/g, '_') || `cat_${Date.now()}`;
-                  const createdCat: Category = {
-                    id: newId,
-                    name: newCatEn.trim() || newCatKh.trim(),
-                    nameKh: newCatKh.trim(),
-                    groupId: activeGroupId,
-                    groupKh: activeGroupObj?.nameKh || 'ជីគីមី',
-                    order: categories.length + 1,
-                  };
-                  if (onQuickAddCategory) {
-                    onQuickAddCategory(createdCat);
-                  }
-                  setFormData((prev) => ({
-                    ...prev,
-                    category: createdCat.id,
-                    categoryKh: createdCat.nameKh,
-                    groupId: activeGroupId,
-                    groupKh: activeGroupObj?.nameKh || 'ជីគីមី',
-                  }));
-                  setIsAddingNewCatModal(false);
-                  setNewCatKh('');
-                  setNewCatEn('');
-                }}
-                className="px-4 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
-              >
-                បង្កើត & ជ្រើសរើស
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        </form>
+      </div>
     </div>
   );
 };

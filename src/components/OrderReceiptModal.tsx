@@ -180,36 +180,41 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
             </div>
           </div>
 
-          {/* Customer & Delivery location info (shown if provided) */}
+          {/* Customer & Delivery location info */}
           <div className="grid grid-cols-2 gap-2 text-slate-700">
-            {order.customer?.fullName && order.customer.fullName !== 'អតិថិជនទូទៅ (Customer)' && (
-              <div>
-                <span className="text-slate-400 block text-[10px]">អតិថិជន:</span>
-                <span className="font-bold font-['Battambang']">{order.customer.fullName}</span>
-              </div>
-            )}
-            {order.customer?.phone && order.customer.phone !== 'មិនបានបញ្ជាក់ (N/A)' && (
-              <div>
-                <span className="text-slate-400 block text-[10px]">លេខទូរស័ព្ទ:</span>
-                <span className="font-mono font-bold">{order.customer.phone}</span>
-              </div>
-            )}
+            <div>
+              <span className="text-slate-400 block text-[10px]">ឈ្មោះអតិថិជន (Name):</span>
+              <span className="font-bold font-['Battambang']">
+                {order.customer?.fullName || 'អតិថិជនទូទៅ'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px]">លេខទូរស័ព្ទ (Phone):</span>
+              <span className="font-mono font-bold">
+                {order.customer?.phone || 'មិនបានបញ្ជាក់ (N/A)'}
+              </span>
+            </div>
             <div className="col-span-2">
               <span className="text-slate-400 block text-[10px]">
-                {order.purchaseChannel === 'direct' ? 'ទីតាំងទទួលទំនិញ:' : 'ទីតាំងដឹកជញ្ជូន (Logistics):'}
+                {order.purchaseChannel === 'direct'
+                  ? 'ទីតាំងទទួលទំនិញ:'
+                  : 'អាសយដ្ឋានដឹកជញ្ជូន (Address / Logistics):'}
               </span>
               <span className="font-medium font-['Battambang'] text-slate-800">
                 {order.purchaseChannel === 'direct' ? (
-                  'ទទួលទំនិញផ្ទាល់នៅហាង/ដេប៉ូ'
+                  'ទទួលទំនិញផ្ទាល់នៅហាង/ដេប៉ូ (មិនដឹកជញ្ជូន)'
                 ) : (
                   <>
-                    {province?.nameKh || 'ដឹកជញ្ជូនទូទាំងប្រទេស (VET Express)'}{' '}
-                    {order.customer?.districtVillage && order.customer.districtVillage !== 'ទិញតាមអនឡាញ' && `- ${order.customer.districtVillage}`}
-                    {order.customer?.deliveryMethod === 'branch' && order.customer.selectedBranch && (
-                      <span className="text-[#1E5FA8] block text-[11px]">
-                        (សាខា VET ទទួល: {order.customer.selectedBranch})
-                      </span>
-                    )}
+                    {province?.nameKh ? `${province.nameKh} ` : ''}
+                    {order.customer?.districtVillage
+                      ? `- ${order.customer.districtVillage}`
+                      : ''}
+                    {order.customer?.deliveryMethod === 'branch' &&
+                      order.customer.selectedBranch && (
+                        <span className="text-[#1E5FA8] block text-[11px]">
+                          (សាខា VET ទទួល: {order.customer.selectedBranch})
+                        </span>
+                      )}
                   </>
                 )}
               </span>

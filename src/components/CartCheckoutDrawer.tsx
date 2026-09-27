@@ -12,17 +12,13 @@ import {
   CheckSquare,
   Square,
   CreditCard,
-  Building2,
   Home,
-  CheckCircle2,
-  Sparkles,
-  ArrowRight,
   AlertCircle,
   FileText,
-  DollarSign,
   QrCode,
   Clock,
-  Send,
+  FastForward,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   CartItem,
@@ -70,8 +66,8 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const cartItems = useMemo(() => propCartItems || propItems || [], [propCartItems, propItems]);
 
   // Checkbox 1: Purchase Type / Channel
-  // 'online' = ទិញតាមរយះ Online
-  // 'direct' = ផ្ទាល់ (ទិញផ្ទាល់នៅហាង/ដេប៉ូ)
+  // 'online' = ទិញតាមរយះ Online (Requires Name, Phone, and Address)
+  // 'direct' = ផ្ទាល់ (Requires Name, Phone — NO Address needed)
   const [purchaseChannel, setPurchaseChannel] = useState<PurchaseChannel>('online');
 
   // Checkbox 2: Payment Method
@@ -80,7 +76,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   // 'credit_unpaid' = ជំពាក់ មិនទាន់ទូទាត់
   const [paymentType, setPaymentType] = useState<PaymentTypeOption>('cash');
 
-  // Customer Form State
+  // Customer Form State (Name, Phone Number, Address)
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [selectedProvinceId, setSelectedProvinceId] = useState('phnom-penh');
@@ -88,6 +84,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   const [selectedBranch, setSelectedBranch] = useState('');
   const [districtVillage, setDistrictVillage] = useState('');
   const [notes, setNotes] = useState('');
+  const [skipCustomerInfo, setSkipCustomerInfo] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   // Selected Province Object
@@ -140,7 +137,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle finalize order submission and receipt generation
+  // Handle finalize order submission with validation (unless skipped)
   const handleSubmitOrder = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -150,25 +147,66 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
       return;
     }
 
-    finalizeAndGenerateReceipt();
+    if (!skipCustomerInfo) {
+      if (!customerName.trim()) {
+        setFormError('សូមបញ្ចូលឈ្មោះអតិថិជន (Please enter customer name) ឬចុចប៊ូតុង «រំលងព័ត៌មាន»');
+        return;
+      }
+      if (!customerPhone.trim()) {
+        setFormError('សូមបញ្ចូលលេខទូរស័ព្ទអតិថិជន (Please enter phone number) ឬចុចប៊ូតុង «រំលងព័ត៌មាន»');
+        return;
+      }
+      if (purchaseChannel === 'online' && !districtVillage.trim()) {
+        setFormError(
+          'សូមបញ្ចូលអាសយដ្ឋានដឹកជញ្ជូនសម្រាប់ការទិញ Online (Please enter address for online order) ឬចុចប៊ូតុង «រំលងព័ត៌មាន»'
+        );
+        return;
+      }
+    }
+
+    finalizeAndGenerateReceipt(skipCustomerInfo);
   };
 
-  const finalizeAndGenerateReceipt = () => {
+  // Dedicated handler for the "Skip Name, Phone & Address" button
+  const handleSkipAndSubmitOrder = () => {
+    setFormError(null);
+    if (cartItems.length === 0) {
+      setFormError('កន្ត្រកទំនិញនៅទទេ សូមជ្រើសរើសទំនិញជាមុនសិន!');
+      return;
+    }
+    setSkipCustomerInfo(true);
+    finalizeAndGenerateReceipt(true);
+  };
+
+  const finalizeAndGenerateReceipt = (isSkipped = false) => {
     const orderId = `TH-${Date.now().toString().slice(-6)}`;
 
+    const finalName = isSkipped
+      ? customerName.trim() || 'អតិថិជនទូទៅ (General Customer)'
+      : customerName.trim() || 'អតិថិជនទូទៅ (General Customer)';
+
+    const finalPhone = isSkipped
+      ? customerPhone.trim() || 'មិនបានបញ្ជាក់ (N/A)'
+      : customerPhone.trim() || 'មិនបានបញ្ជាក់ (N/A)';
+
+    const finalAddress =
+      purchaseChannel === 'online'
+        ? districtVillage.trim() || `${currentProvince.nameKh} (ទិញតាម Online)`
+        : 'ទិញផ្ទាល់នៅហាង/ដេប៉ូ (In-Store)';
+
     const customerInfo: OrderCustomerInfo = {
-      fullName: customerName.trim() || 'អតិថិជនទូទៅ (Customer)',
-      phone: customerPhone.trim() || 'មិនបានបញ្ជាក់ (N/A)',
+      fullName: finalName,
+      phone: finalPhone,
       provinceId: purchaseChannel === 'online' ? selectedProvinceId : 'direct-store',
-      districtVillage: purchaseChannel === 'online' ? (districtVillage.trim() || 'ទិញតាមអនឡាញ') : 'ទិញផ្ទាល់នៅហាង/ដេប៉ូ',
+      districtVillage: finalAddress,
       deliveryMethod: purchaseChannel === 'online' ? deliveryMethod : 'branch',
-      selectedBranch: (purchaseChannel === 'online' && deliveryMethod === 'branch' && selectedBranch) ? selectedBranch : '',
+      selectedBranch:
+        purchaseChannel === 'online' && deliveryMethod === 'branch' && selectedBranch
+          ? selectedBranch
+          : '',
       notes: notes || '',
     };
 
-    // Determine status:
-    // - If 'cash': status is 'paid'
-    // - If 'credit_unpaid': pending_payment (marked as credit/unpaid)
     let orderStatus: Order['status'] = 'paid';
     if (paymentType === 'credit_unpaid') {
       orderStatus = 'pending_payment';
@@ -205,9 +243,12 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
   return (
     <div className="fixed inset-0 z-50 overflow-hidden font-['Battambang']">
       {/* Backdrop */}
-      <div onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity" />
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+      />
 
-      <div className="fixed inset-y-0 right-0 max-w-full flex pl-6 sm:pl-10">
+      <div className="fixed inset-y-0 right-0 max-w-full flex pl-4 sm:pl-10">
         <div className="w-screen max-w-2xl bg-white shadow-2xl flex flex-col justify-between">
           {/* Drawer Header */}
           <div className="p-4 sm:p-5 bg-[#1E5FA8] text-white flex items-center justify-between shadow-xs shrink-0">
@@ -220,7 +261,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   កន្ត្រកទំនិញ & បញ្ជាក់ការទិញ
                 </h2>
                 <p className="text-[11px] text-blue-100 font-['Kantumruy_Pro']">
-                  ជ្រើសរើសប្រភេទការទិញ និងវិធីទូទាត់ប្រាក់ ព្រមទាំងចេញវិក្កយបត្រជូនអតិថិជន
+                  បំពេញព័ត៌មានអតិថិជន ជ្រើសរើសប្រភេទការទិញ ឬចុចរំលងព័ត៌មានដើម្បីចេញវិក្កយបត្រភ្លាមៗ
                 </p>
               </div>
             </div>
@@ -234,7 +275,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
           </div>
 
           {/* Drawer Content */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
             {/* Empty State */}
             {cartItems.length === 0 ? (
               <div className="text-center py-16 space-y-4">
@@ -245,7 +286,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   កន្ត្រកទំនិញរបស់អ្នកនៅទទេ
                 </h3>
                 <p className="text-xs text-slate-500 max-w-xs mx-auto font-['Kantumruy_Pro']">
-                  សូមជ្រើសរើសមុខជីកសិកម្ម ឬជីសរីរាង្គដែលលោកអ្នកត្រូវការដើម្បីបន្ថែមក្នុងកន្ត្រក
+                  សូមជ្រើសរើសមុខជីកសិកម្ម ឬគ្រឿងចក្រដែលលោកអ្នកត្រូវការដើម្បីបន្ថែមក្នុងកន្ត្រក
                 </p>
                 <button
                   onClick={onClose}
@@ -255,20 +296,20 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                 </button>
               </div>
             ) : (
-              <form onSubmit={handleSubmitOrder} className="space-y-6">
+              <form onSubmit={handleSubmitOrder} className="space-y-5">
                 {formError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2 font-['Kantumruy_Pro']">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2 font-['Kantumruy_Pro'] animate-in fade-in">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
                     <span>{formError}</span>
                   </div>
                 )}
 
                 {/* 1. CART ITEMS LIST */}
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-['Battambang'] flex items-center gap-2">
                       <ShoppingBag className="w-4 h-4 text-[#1E5FA8]" />
-                      <span>មុខទំនិញដែលបានជ្រើសរើស ({totalItemsCount} បាវ)</span>
+                      <span>មុខទំនិញដែលបានជ្រើសរើស ({totalItemsCount})</span>
                     </h3>
                     <button
                       type="button"
@@ -280,19 +321,18 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     </button>
                   </div>
 
-                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-2xs max-h-56 overflow-y-auto">
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-2xs max-h-48 overflow-y-auto">
                     {cartItems.map((item) => {
                       const priceUSD = item.product.price;
                       const priceKHR = Math.round(priceUSD * EXCHANGE_RATE_KHR);
                       const itemTotalUSD = priceUSD * item.quantity;
-                      const itemTotalKHR = Math.round(itemTotalUSD * EXCHANGE_RATE_KHR);
 
                       return (
                         <div
                           key={item.product.id}
-                          className="p-3 sm:p-4 flex items-center gap-3 sm:gap-4 hover:bg-slate-50/50 transition-colors"
+                          className="p-3 sm:p-3.5 flex items-center gap-3 hover:bg-slate-50/50 transition-colors"
                         >
-                          <div className="w-12 h-14 bg-slate-100 rounded-xl border border-slate-200 shrink-0 overflow-hidden flex items-center justify-center shadow-2xs">
+                          <div className="w-11 h-12 bg-slate-100 rounded-xl border border-slate-200 shrink-0 overflow-hidden flex items-center justify-center shadow-2xs">
                             <ProductBagIllustration
                               product={item.product}
                               size="sm"
@@ -315,12 +355,12 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                             </div>
                           </div>
 
-                          <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <div className="flex flex-col items-end gap-1 shrink-0">
                             <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50 shadow-2xs">
                               <button
                                 type="button"
                                 onClick={() => onUpdateQuantity(item.product.id, -1)}
-                                className="p-1.5 hover:bg-slate-200 text-slate-600 transition-colors"
+                                className="p-1.5 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
@@ -330,7 +370,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                               <button
                                 type="button"
                                 onClick={() => onUpdateQuantity(item.product.id, 1)}
-                                className="p-1.5 hover:bg-slate-200 text-slate-600 transition-colors"
+                                className="p-1.5 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
@@ -345,20 +385,23 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* 2. CHECKBOX SECTION 1: PURCHASE CHANNEL (ទិញតាមរយះ Online ឬ ផ្ទាល់) */}
+                {/* 2. PURCHASE CHANNEL (ទិញតាមរយះ Online ឬ ផ្ទាល់) */}
                 <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-slate-900 uppercase tracking-wider font-['Battambang'] flex items-center gap-2">
                       <CheckSquare className="w-4 h-4 text-[#1E5FA8]" />
-                      <span>ប្រភេទការទិញ (Purchase Option)</span>
+                      <span>១. ប្រភេទការទិញ (Purchase Option)</span>
                     </label>
                     <span className="text-[11px] text-slate-500 font-semibold">ជ្រើសរើសមួយ</span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-['Battambang']">
-                    {/* Checkbox: ទិញតាមរយះ Online */}
+                    {/* Option 1: ទិញតាមរយះ Online */}
                     <div
-                      onClick={() => setPurchaseChannel('online')}
+                      onClick={() => {
+                        setPurchaseChannel('online');
+                        setFormError(null);
+                      }}
                       className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
                         purchaseChannel === 'online'
                           ? 'border-[#1E5FA8] bg-blue-50/60 shadow-xs'
@@ -377,14 +420,17 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                           ទិញតាមរយះ Online
                         </div>
                         <p className="text-[11px] text-slate-500 font-['Kantumruy_Pro'] mt-0.5">
-                          ដឹកជញ្ជូនតាម VET Express ទៅកាន់ ២៥ ខេត្ត/ក្រុង
+                          ត្រូវការឈ្មោះ លេខទូរស័ព្ទ និងអាសយដ្ឋានដឹកជញ្ជូន
                         </p>
                       </div>
                     </div>
 
-                    {/* Checkbox: ផ្ទាល់ */}
+                    {/* Option 2: ផ្ទាល់ (Not Online) */}
                     <div
-                      onClick={() => setPurchaseChannel('direct')}
+                      onClick={() => {
+                        setPurchaseChannel('direct');
+                        setFormError(null);
+                      }}
                       className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
                         purchaseChannel === 'direct'
                           ? 'border-[#1E5FA8] bg-blue-50/60 shadow-xs'
@@ -403,25 +449,207 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                           ផ្ទាល់ (In-Person Store)
                         </div>
                         <p className="text-[11px] text-slate-500 font-['Kantumruy_Pro'] mt-0.5">
-                          ទិញផ្ទាល់នៅដេប៉ូ ឬហាង (មិនគិតសេវាដឹក)
+                          ទិញផ្ទាល់នៅហាង (មិនចាំបាច់បំពេញអាសយដ្ឋានទេ)
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* 3. CHECKBOX SECTION 2: PAYMENT METHOD (ទូទាត់លុយសុទ្ធ, Scan QR, ជំពាក់ មិនទាន់ទូទាត់) */}
+                {/* 3. CUSTOMER INFORMATION: NAME, PHONE NUMBER & CONDITIONAL ADDRESS */}
+                <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <label className="text-xs font-bold text-slate-900 uppercase tracking-wider font-['Battambang'] flex items-center gap-2">
+                      <User className="w-4 h-4 text-[#1E5FA8]" />
+                      <span>
+                        ២. ព័ត៌មានអតិថិជន (Name, Phone
+                        {purchaseChannel === 'online' ? ' & Address' : ''})
+                      </span>
+                    </label>
+
+                    {/* Toggle Skip Info button inside header */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSkipCustomerInfo(!skipCustomerInfo);
+                        setFormError(null);
+                      }}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                        skipCustomerInfo
+                          ? 'bg-amber-500 text-white border-amber-500 shadow-2xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <FastForward className="w-3.5 h-3.5" />
+                      <span>
+                        {skipCustomerInfo
+                          ? 'បានរំលងព័ត៌មាន (Skipped ✓)'
+                          : 'រំលងការបំពេញព័ត៌មាន (Skip Info)'}
+                      </span>
+                    </button>
+                  </div>
+
+                  {skipCustomerInfo ? (
+                    <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>
+                          បានជ្រើសរើស <strong>រំលងការបំពេញឈ្មោះ លេខទូរស័ព្ទ និងអាសយដ្ឋាន</strong>។ អ្នកអាចចុចចេញវិក្កយបត្រភ្លាមៗបាន។
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSkipCustomerInfo(false)}
+                        className="text-[11px] font-bold text-[#1E5FA8] underline shrink-0 cursor-pointer"
+                      >
+                        បំពេញវិញ
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3.5">
+                      {/* Row: Customer Name & Phone Number */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                            ឈ្មោះអតិថិជន (Name) <span className="text-rose-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="text"
+                              value={customerName}
+                              onChange={(e) => {
+                                setCustomerName(e.target.value);
+                                if (formError) setFormError(null);
+                              }}
+                              placeholder="ឧ. ពូ សុខា / ដេប៉ូ រុងរឿង"
+                              className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#1E5FA8] rounded-xl text-xs sm:text-sm text-slate-900 outline-none transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                            លេខទូរស័ព្ទ (Phone Number) <span className="text-rose-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="tel"
+                              value={customerPhone}
+                              onChange={(e) => {
+                                setCustomerPhone(e.target.value);
+                                if (formError) setFormError(null);
+                              }}
+                              placeholder="ឧ. 012 345 678"
+                              className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#1E5FA8] rounded-xl text-xs sm:text-sm font-mono text-slate-900 outline-none transition-colors"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Conditional Address Fields: ONLY SHOWN & REQUIRED WHEN ONLINE IS SELECTED */}
+                      {purchaseChannel === 'online' ? (
+                        <div className="pt-2 border-t border-slate-100 space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            {/* Province Select */}
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                ខេត្ត / រាជធានី (Province) <span className="text-rose-500">*</span>
+                              </label>
+                              <select
+                                value={selectedProvinceId}
+                                onChange={(e) => setSelectedProvinceId(e.target.value)}
+                                className="w-full px-3.5 py-2.5 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#1E5FA8] rounded-xl text-xs sm:text-sm text-slate-900 font-medium outline-none cursor-pointer"
+                              >
+                                {CAMBODIA_PROVINCES.map((prov) => (
+                                  <option key={prov.id} value={prov.id}>
+                                    {prov.nameKh} ({prov.nameEn})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Delivery Method (VET Branch vs Door) */}
+                            <div>
+                              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                                របៀបដឹកជញ្ជូន (Delivery Method)
+                              </label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setDeliveryMethod('branch')}
+                                  className={`py-2 px-2.5 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                    deliveryMethod === 'branch'
+                                      ? 'bg-[#1E5FA8] text-white border-[#1E5FA8]'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  <Truck className="w-3.5 h-3.5" />
+                                  <span>សាខា VET</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeliveryMethod('door')}
+                                  className={`py-2 px-2.5 rounded-xl text-xs font-bold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                    deliveryMethod === 'door'
+                                      ? 'bg-[#1E5FA8] text-white border-[#1E5FA8]'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  <Home className="w-3.5 h-3.5" />
+                                  <span>ដល់ផ្ទះ</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Detailed Address Input (Required when Online) */}
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                              អាសយដ្ឋានដឹកជញ្ជូន (Address / ស្រុក-ភូមិ-ឃុំ ឬសាខាទទួល){' '}
+                              <span className="text-rose-500">*</span>
+                            </label>
+                            <div className="relative">
+                              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                              <input
+                                type="text"
+                                value={districtVillage}
+                                onChange={(e) => {
+                                  setDistrictVillage(e.target.value);
+                                  if (formError) setFormError(null);
+                                }}
+                                placeholder="ឧ. ភូមិថ្មី ឃុំព្រែកដំបង ស្រុកមុខកំពូល ឬ សាខា VET ទីរួមខេត្ត..."
+                                className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50/70 focus:bg-white border border-slate-200 focus:border-[#1E5FA8] rounded-xl text-xs sm:text-sm text-slate-900 outline-none transition-colors"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Direct / In-Person Purchase: No Address Field Needed */
+                        <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 text-xs text-emerald-800 flex items-center gap-2 font-['Kantumruy_Pro']">
+                          <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>
+                            <strong>ទិញផ្ទាល់ (Not Online):</strong> មិនចាំបាច់បំពេញអាសយដ្ឋានដឹកជញ្ជូនទេ (ទទួលទំនិញផ្ទាល់នៅហាង/ដេប៉ូ)។
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. PAYMENT METHOD (ទូទាត់លុយសុទ្ធ, Scan QR, ជំពាក់ មិនទាន់ទូទាត់) */}
                 <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-slate-900 uppercase tracking-wider font-['Battambang'] flex items-center gap-2">
                       <CreditCard className="w-4 h-4 text-[#1E5FA8]" />
-                      <span>វិធីទូទាត់ប្រាក់ (Payment Method)</span>
+                      <span>៣. វិធីទូទាត់ប្រាក់ (Payment Method)</span>
                     </label>
                     <span className="text-[11px] text-slate-500 font-semibold">ជ្រើសរើសមួយ</span>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-['Battambang']">
-                    {/* Checkbox: ទូទាត់លុយសុទ្ធ */}
+                    {/* Cash */}
                     <div
                       onClick={() => setPaymentType('cash')}
                       className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
@@ -447,7 +675,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                       </div>
                     </div>
 
-                    {/* Checkbox: Scan QR */}
+                    {/* Scan QR */}
                     <div
                       onClick={() => setPaymentType('scan_qr')}
                       className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
@@ -473,7 +701,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                       </div>
                     </div>
 
-                    {/* Checkbox: ជំពាក់ មិនទាន់ទូទាត់ */}
+                    {/* Credit / Unpaid */}
                     <div
                       onClick={() => setPaymentType('credit_unpaid')}
                       className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-start gap-3 ${
@@ -500,7 +728,6 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* If Scan QR selected, show helper info */}
                   {paymentType === 'scan_qr' && (
                     <div className="p-3 bg-blue-50/90 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center gap-2 font-['Kantumruy_Pro']">
                       <QrCode className="w-4 h-4 shrink-0 text-[#1E5FA8]" />
@@ -510,7 +737,6 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     </div>
                   )}
 
-                  {/* If Credit/Unpaid selected, show warning note */}
                   {paymentType === 'credit_unpaid' && (
                     <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center gap-2 font-['Kantumruy_Pro']">
                       <Clock className="w-4 h-4 shrink-0 text-amber-700" />
@@ -521,7 +747,7 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   )}
                 </div>
 
-                {/* 4. PRICE & TOTAL SUMMARY */}
+                {/* 5. PRICE & TOTAL SUMMARY */}
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 text-xs font-['Kantumruy_Pro']">
                   <div className="flex justify-between text-slate-600">
                     <span>តម្លៃទំនិញសរុប (Subtotal):</span>
@@ -554,8 +780,9 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* 6. SUBMIT BUTTON & GENERATE RECEIPT */}
-                <div className="space-y-2 pt-2">
+                {/* 6. SUBMIT BUTTONS: CONFIRM ORDER OR SKIP CUSTOMER INFO & ORDER IMMEDIATELY */}
+                <div className="space-y-2.5 pt-1">
+                  {/* Button 1: Confirm Order with Customer Info */}
                   <button
                     type="submit"
                     className="w-full py-3.5 bg-[#1E5FA8] hover:bg-blue-800 text-white text-xs sm:text-sm font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 font-['Battambang'] cursor-pointer"
@@ -563,6 +790,18 @@ export const CartCheckoutDrawer: React.FC<CartCheckoutDrawerProps> = ({
                     <FileText className="w-4 h-4" />
                     <span>
                       បញ្ជាក់ការកុម្ម៉ង់ & ចេញវិក្កយបត្រ (${grandTotalUSD.toFixed(2)})
+                    </span>
+                  </button>
+
+                  {/* Button 2: Skip Name, Phone Number & Address and Generate Receipt Immediately */}
+                  <button
+                    type="button"
+                    onClick={handleSkipAndSubmitOrder}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 font-['Battambang'] cursor-pointer"
+                  >
+                    <FastForward className="w-4 h-4" />
+                    <span>
+                      រំលងព័ត៌មាន (ឈ្មោះ លេខទូរស័ព្ទ & អាសយដ្ឋាន) & ចេញវិក្កយបត្រភ្លាម
                     </span>
                   </button>
 

@@ -9,7 +9,7 @@ import { isValidProductImageUrl } from './components/ProductBagIllustration';
 import { Home } from './pages/Home';
 import { ProductDetail } from './pages/ProductDetail';
 import { AdminLogin } from './pages/AdminLogin';
-import { AdminDashboard } from './pages/AdminDashboard';
+import { AdminDashboard, AdminNavSection } from './pages/AdminDashboard';
 import { sendOrderToTelegram } from './lib/telegram';
 import {
   subscribeToProducts,
@@ -117,6 +117,7 @@ export default function App() {
 
   // Active view: 'catalog' | 'detail' | 'admin' | 'login'
   const [activeTab, setActiveTab] = useState<'catalog' | 'detail' | 'calculator' | 'admin' | 'contact'>('catalog');
+  const [adminInitialSection, setAdminInitialSection] = useState<AdminNavSection>('products');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ProductGroupId>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -726,6 +727,7 @@ export default function App() {
           isLoading={isDatabaseLoading}
           isFirebaseSynced={isFirebaseSynced}
           firebaseError={firebaseError}
+          initialSection={adminInitialSection}
           onUpdateProduct={handleUpdateProduct}
           onAddProduct={handleAddProduct}
           onDeleteProduct={handleDeleteProduct}
@@ -750,7 +752,12 @@ export default function App() {
           {/* Global Header */}
           <Header
             activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            setActiveTab={(tab) => {
+              if (tab === 'admin') {
+                setAdminInitialSection('products');
+              }
+              setActiveTab(tab);
+            }}
             currency={currency}
             setCurrency={setCurrency}
             priceMode={priceMode}

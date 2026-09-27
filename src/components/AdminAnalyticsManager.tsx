@@ -26,7 +26,6 @@ import {
   PieChart,
   Activity,
   BarChart2,
-  Boxes,
   TableProperties
 } from 'lucide-react';
 import { Order, Currency, Product, CompanyProfile } from '../types';
@@ -35,7 +34,6 @@ import { CAMBODIA_PROVINCES } from '../data/cambodiaProvinces';
 import { OrderReceiptModal } from './OrderReceiptModal';
 import { generateAndPrintPdfReport } from '../utils/pdfReportGenerator';
 import { exportOrdersToExcel } from '../utils/excelReportGenerator';
-import { ProductStockAnalytics } from './ProductStockAnalytics';
 import { CirclePercentChart } from './CirclePercentChart';
 import { ProductCostReportModal } from './ProductCostReportModal';
 
@@ -434,8 +432,8 @@ export const AdminAnalyticsManager: React.FC<AdminAnalyticsManagerProps> = ({
     ordersCount: 0,
   });
 
-  // Visual Chart View Tab (Stock & Inventory, Circle % Donut, or Daily Bar)
-  const [visualChartTab, setVisualChartTab] = useState<'stock' | 'circle' | 'bar'>('stock');
+  // Visual Chart View Tab (Circle % Donut or Daily Bar)
+  const [visualChartTab, setVisualChartTab] = useState<'circle' | 'bar'>('circle');
   const [isProductCostReportModalOpen, setIsProductCostReportModalOpen] = useState(false);
 
   // Export to authentic multi-sheet Excel (.xlsx) file
@@ -923,19 +921,6 @@ export const AdminAnalyticsManager: React.FC<AdminAnalyticsManagerProps> = ({
           <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-['Battambang'] flex-wrap">
             <button
               type="button"
-              onClick={() => setVisualChartTab('stock')}
-              className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
-                visualChartTab === 'stock'
-                  ? 'bg-gradient-to-r from-blue-700 to-[#1E5FA8] text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Boxes className="w-3.5 h-3.5" />
-              <span>ស្តុកទំនិញ (Stock & Inventory)</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => setVisualChartTab('circle')}
               className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-2 cursor-pointer ${
                 visualChartTab === 'circle'
@@ -962,16 +947,7 @@ export const AdminAnalyticsManager: React.FC<AdminAnalyticsManagerProps> = ({
           </div>
         </div>
 
-        {/* 1. Product Stock & Inventory Analytics View */}
-        {visualChartTab === 'stock' && (
-          <ProductStockAnalytics
-            products={products}
-            orders={orders}
-            exchangeRateKHR={EXCHANGE_RATE_KHR}
-          />
-        )}
-
-        {/* 2. Circle Percent Donut Chart View */}
+        {/* 1. Circle Percent Donut Chart View */}
         {visualChartTab === 'circle' && (
           <CirclePercentChart
             orders={filteredOrders}
@@ -980,7 +956,7 @@ export const AdminAnalyticsManager: React.FC<AdminAnalyticsManagerProps> = ({
           />
         )}
 
-        {/* 3. Daily Bar Chart View */}
+        {/* 2. Daily Bar Chart View */}
         {visualChartTab === 'bar' && (
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4 font-['Battambang']">
             {/* Chart Header & Controls */}

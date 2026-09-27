@@ -212,7 +212,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Admin Dashboard / Login Button */}
           <button
             onClick={() => setActiveTab('admin')}
-            className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
               activeTab === 'admin'
                 ? 'bg-white text-[#1E5FA8] border-white'
                 : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
@@ -220,7 +220,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="ផ្ទាំងគ្រប់គ្រង (Admin Dashboard)"
           >
             <User className="w-3.5 h-3.5" />
-            <span className="inline font-['Battambang']">
+            <span className="hidden sm:inline font-['Battambang']">
               {isAdminLoggedIn ? 'ផ្ទាំងគ្រប់គ្រង' : 'គ្រប់គ្រង'}
             </span>
           </button>
